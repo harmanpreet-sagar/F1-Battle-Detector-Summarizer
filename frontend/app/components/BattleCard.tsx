@@ -33,10 +33,10 @@ export function BattleCard({ battle, showSparkline = true }: BattleCardProps) {
       </div>
 
       <div className="flex gap-4 text-xs text-gray-500">
-        {battle.closing_rate_s_per_s !== null && (
+        {battle.closing_rate_s_per_s !== null && battle.closing_rate_s_per_s !== undefined && (
           <span>Closing: {battle.closing_rate_s_per_s.toFixed(2)}s/s</span>
         )}
-        {battle.pace_delta_s_per_lap !== null && (
+        {battle.pace_delta_s_per_lap !== null && battle.pace_delta_s_per_lap !== undefined && (
           <span>Pace: {battle.pace_delta_s_per_lap.toFixed(2)}s/lap</span>
         )}
       </div>
