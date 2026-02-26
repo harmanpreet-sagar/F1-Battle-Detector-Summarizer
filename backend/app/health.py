@@ -82,4 +82,6 @@ health_manager = HealthManager()
 
 def get_health_status() -> dict:
     """Get health status as dict for API endpoint."""
-    return health_manager.get_status().model_dump()
+    health_data = health_manager.get_status().model_dump()
+    health_data["timestamp"] = datetime.now().isoformat()
+    return health_data

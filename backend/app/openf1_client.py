@@ -65,13 +65,50 @@ class OpenF1Client:
             return sessions[-1]
         return None
     
-    async def get_positions(self, session_key: int) -> List[Dict]:
-        """Get position data for a session."""
-        return await self._request("position", {"session_key": session_key})
+    async def get_positions(self, session_key: int, driver_number: Optional[int] = None) -> List[Dict]:
+        """
+        Get position data for a session.
+        
+        Args:
+            session_key: Session identifier
+            driver_number: Optional driver number to filter by
+        
+        Returns:
+            List of position data points
+        """
+        params = {"session_key": session_key}
+        if driver_number:
+            params["driver_number"] = driver_number
+        return await self._request("position", params)
     
-    async def get_laps(self, session_key: int) -> List[Dict]:
-        """Get lap data for a session."""
-        return await self._request("laps", {"session_key": session_key})
+    async def get_latest_positions(self, session_key: int) -> List[Dict]:
+        """
+        Get the most recent position for each driver in a session.
+        OpenF1 returns data sorted by date, so we get the last entry per driver.
+        """
+        positions = await self.get_positions(session_key)
+        
+        # Group by driver_number and take the latest (last) entry for each
+        latest_by_driver = {}
+        for pos in positions:
+            driver_num = pos.get("driver_number")
+            if driver_num:
+                latest_by_driver[driver_num] = pos
+        
+        return list(latest_by_driver.values())
+    
+    async def get_laps(self, session_key: int, driver_number: Optional[int] = None) -> List[Dict]:
+        """
+        Get lap data for a session.
+        
+        Args:
+            session_key: Session identifier
+            driver_number: Optional driver number to filter by
+        """
+        params = {"session_key": session_key}
+        if driver_number:
+            params["driver_number"] = driver_number
+        return await self._request("laps", params)
     
     async def get_drivers(self, session_key: int) -> List[Dict]:
         """Get driver information for a session."""

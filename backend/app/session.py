@@ -23,15 +23,30 @@ class SessionManager:
             session_data = await openf1_client.get_latest_session()
             
             if session_data:
-                # TODO: Parse session data into SessionStatus model
-                logger.info(f"Found session: {session_data.get('session_name')}")
-                self.current_session = None  # Placeholder
+                # Parse OpenF1 session data into our SessionStatus model
+                self.current_session = SessionStatus(
+                    session_key=session_data.get("session_key"),
+                    session_name=session_data.get("session_name", "Unknown"),
+                    session_type=session_data.get("session_type", "Unknown"),
+                    session_status="started",  # OpenF1 doesn't always provide this
+                    circuit_short_name=session_data.get("circuit_short_name", "Unknown"),
+                    meeting_name=session_data.get("meeting_official_name") or session_data.get("meeting_name", "Unknown"),
+                    current_lap=None,  # Will be updated from position data
+                    total_laps=None,  # Not always available in session endpoint
+                    track_status=None,  # Will be inferred from live data or session status
+                    gmt_offset=session_data.get("gmt_offset", "+00:00"),
+                    updated_at=datetime.now()
+                )
+                logger.info(
+                    f"Session updated: {self.current_session.meeting_name} - "
+                    f"{self.current_session.session_name} (key: {self.current_session.session_key})"
+                )
             else:
                 logger.warning("No active session found")
                 self.current_session = None
         
         except Exception as e:
-            logger.error(f"Failed to update session: {e}")
+            logger.error(f"Failed to update session: {e}", exc_info=True)
     
     def get_current_session(self) -> Optional[SessionStatus]:
         """Get the current active session."""
