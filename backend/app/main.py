@@ -12,6 +12,7 @@ from app.health import get_health_status, health_manager
 from app.openf1_client import openf1_client, OpenF1APIError
 from app.session import session_manager
 from app.state import state_manager
+from app.battle import detect_battles
 
 # Configure logging
 logging.basicConfig(
@@ -197,13 +198,66 @@ async def get_latest_state():
 @app.get("/battles/top")
 async def get_top_battles(k: int = 5, min_intensity: str = "WATCH"):
     """Get top K battles filtered by minimum intensity."""
-    # TODO: Implement battle detection (Phase 2)
-    # For now, return empty list with message
+    # Get current driver states
+    driver_states = state_manager.get_all_current_states()
+    
+    if not driver_states:
+        return {
+            "battles": [],
+            "count": 0,
+            "message": "No driver data available. Waiting for active session with position data.",
+            "updated_at": None
+        }
+    
+    # Get driver histories for trend calculations
+    driver_histories = {
+        driver.driver_number: state_manager.get_history(driver.driver_number)
+        for driver in driver_states
+    }
+    
+    # Get track status from session
+    session = session_manager.get_current_session()
+    track_status = session.track_status if session else None
+    
+    # Detect battles
+    all_battles = detect_battles(driver_states, driver_histories, track_status)
+    
+    # Filter by minimum intensity
+    intensity_order = {"HOT": 2, "WATCH": 1, "NONE": 0}
+    min_intensity_value = intensity_order.get(min_intensity.upper(), 1)
+    
+    filtered_battles = [
+        b for b in all_battles
+        if intensity_order.get(b.intensity, 0) >= min_intensity_value
+    ]
+    
+    # Take top K
+    top_battles = filtered_battles[:k]
+    
+    # Enrich battles with driver names for frontend convenience
+    enriched_battles = []
+    for battle in top_battles:
+        battle_dict = battle.model_dump()
+        
+        # Add driver names
+        chaser_info = state_manager.get_driver_info(battle.chaser_driver_number)
+        ahead_info = state_manager.get_driver_info(battle.ahead_driver_number)
+        
+        if chaser_info:
+            battle_dict["chaser_name"] = chaser_info["full_name"]
+            battle_dict["chaser_team"] = chaser_info["team_name"]
+        
+        if ahead_info:
+            battle_dict["ahead_name"] = ahead_info["full_name"]
+            battle_dict["ahead_team"] = ahead_info["team_name"]
+        
+        enriched_battles.append(battle_dict)
+    
     return {
-        "battles": [],
-        "count": 0,
-        "message": "Battle detection not yet implemented. Coming in Phase 2!",
-        "updated_at": None
+        "battles": enriched_battles,
+        "count": len(top_battles),
+        "total_detected": len(all_battles),
+        "updated_at": driver_states[0].updated_at.isoformat() if driver_states else None
     }
 
 

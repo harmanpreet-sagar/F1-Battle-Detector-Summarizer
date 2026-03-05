@@ -1,7 +1,7 @@
 """
 In-memory state manager for driver states and rolling history.
 """
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from collections import deque
 from datetime import datetime
 import logging
@@ -45,6 +45,17 @@ class StateManager:
     def get_history(self, driver_number: int) -> List[DriverState]:
         """Get history for a driver."""
         return list(self.history.get(driver_number, []))
+    
+    def get_driver_info(self, driver_number: int) -> Optional[Dict]:
+        """Get basic driver info (name, team)."""
+        state = self.get_current_state(driver_number)
+        if state:
+            return {
+                "driver_number": state.driver_number,
+                "full_name": state.full_name,
+                "team_name": state.team_name
+            }
+        return None
     
     def update_from_openf1_positions(self, positions: List[Dict], drivers_info: Dict[int, Dict]):
         """
