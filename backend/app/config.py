@@ -46,6 +46,9 @@ class Config:
     
     # Logging
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+    
+    # Testing
+    TEST_MODE: bool = os.getenv("TEST_MODE", "false").lower() == "true"
 
 
 config = Config()

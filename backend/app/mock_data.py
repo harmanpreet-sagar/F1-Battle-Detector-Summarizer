@@ -1,0 +1,149 @@
+"""
+Mock data generator for testing battle detection without live F1 sessions.
+"""
+from datetime import datetime, timedelta
+from typing import List
+import random
+
+from app.models import DriverState, SessionStatus
+
+
+# Mock driver data
+MOCK_DRIVERS = [
+    {"number": 1, "name": "Max Verstappen", "team": "Red Bull Racing"},
+    {"number": 11, "name": "Sergio Perez", "team": "Red Bull Racing"},
+    {"number": 16, "name": "Charles Leclerc", "team": "Ferrari"},
+    {"number": 55, "name": "Carlos Sainz", "team": "Ferrari"},
+    {"number": 44, "name": "Lewis Hamilton", "team": "Mercedes"},
+    {"number": 63, "name": "George Russell", "team": "Mercedes"},
+    {"number": 4, "name": "Lando Norris", "team": "McLaren"},
+    {"number": 81, "name": "Oscar Piastri", "team": "McLaren"},
+    {"number": 14, "name": "Fernando Alonso", "team": "Aston Martin"},
+    {"number": 18, "name": "Lance Stroll", "team": "Aston Martin"},
+    {"number": 10, "name": "Pierre Gasly", "team": "Alpine"},
+    {"number": 31, "name": "Esteban Ocon", "team": "Alpine"},
+    {"number": 23, "name": "Alex Albon", "team": "Williams"},
+    {"number": 2, "name": "Logan Sargeant", "team": "Williams"},
+    {"number": 22, "name": "Yuki Tsunoda", "team": "AlphaTauri"},
+    {"number": 3, "name": "Daniel Ricciardo", "team": "AlphaTauri"},
+    {"number": 77, "name": "Valtteri Bottas", "team": "Alfa Romeo"},
+    {"number": 24, "name": "Zhou Guanyu", "team": "Alfa Romeo"},
+    {"number": 20, "name": "Kevin Magnussen", "team": "Haas"},
+    {"number": 27, "name": "Nico Hulkenberg", "team": "Haas"},
+]
+
+
+class MockDataGenerator:
+    """Generates realistic mock race data."""
+    
+    def __init__(self):
+        self.tick = 0
+        self.base_gaps = self._initialize_gaps()
+    
+    def _initialize_gaps(self):
+        """Create initial gap structure with some close battles."""
+        return [
+            0.0,      # P1 - Leader
+            0.8,      # P2 - HOT battle with P1!
+            2.5,      # P3
+            0.6,      # P4 - WATCH battle with P3!
+            1.2,      # P5 - Potential battle with P4
+            3.5,      # P6
+            1.5,      # P7 - WATCH battle
+            4.2,      # P8
+            2.1,      # P9
+            1.8,      # P10 - Close battle
+            5.5,      # P11
+            3.2,      # P12
+            2.8,      # P13
+            6.1,      # P14
+            4.5,      # P15
+            3.9,      # P16
+            7.2,      # P17
+            5.8,      # P18
+            4.3,      # P19
+            8.1,      # P20
+        ]
+    
+    def generate_driver_states(self) -> List[DriverState]:
+        """Generate mock driver states with evolving battles."""
+        self.tick += 1
+        states = []
+        
+        cumulative_gap_to_leader = 0.0
+        
+        for position in range(1, 21):
+            idx = position - 1
+            driver = MOCK_DRIVERS[idx]
+            
+            # Get base gap to car ahead
+            gap_to_ahead = self.base_gaps[idx]
+            
+            # Add some dynamic behavior - use oscillating patterns for realistic battles
+            import math
+            
+            if position == 2:
+                # P2 is catching P1 (HOT battle) - slow, consistent closing
+                gap_to_ahead = 0.35 + 0.08 * math.sin(self.tick * 0.2) - (self.tick * 0.005)
+                gap_to_ahead = max(0.25, min(0.5, gap_to_ahead))
+            elif position == 4:
+                # P4 is slowly catching P3 (WATCH battle) - gentle oscillation
+                gap_to_ahead = 0.45 + 0.08 * math.sin(self.tick * 0.15) - (self.tick * 0.003)
+                gap_to_ahead = max(0.35, min(0.6, gap_to_ahead))
+            elif position == 7:
+                # P7 maintaining gap to P6 - consistent pressure
+                gap_to_ahead = 1.5 + 0.15 * math.sin(self.tick * 0.3)
+            elif position == 10:
+                # P10 and P9 having a close battle - gentle oscillation staying close
+                gap_to_ahead = 0.95 + 0.15 * math.sin(self.tick * 0.3) - (self.tick * 0.004)
+                gap_to_ahead = max(0.75, min(1.15, gap_to_ahead))
+            else:
+                # Others have stable gaps with small variations
+                gap_to_ahead += random.uniform(-0.05, 0.05)
+            
+            # Update cumulative gap to leader
+            cumulative_gap_to_leader += gap_to_ahead
+            
+            state = DriverState(
+                driver_number=driver["number"],
+                full_name=driver["name"],
+                team_name=driver["team"],
+                position=position,
+                last_lap_time_s=None,
+                gap_to_leader_s=cumulative_gap_to_leader if position > 1 else 0.0,
+                gap_to_ahead_s=gap_to_ahead if position > 1 else None,
+                tire_compound="SOFT" if position <= 10 else "MEDIUM",
+                tire_age_laps=random.randint(5, 25),
+                pit_stops_count=random.randint(0, 2),
+                updated_at=datetime.now(),
+                data_confidence="high"
+            )
+            
+            states.append(state)
+        
+        return states
+    
+    def generate_mock_session(self) -> SessionStatus:
+        """Generate a mock session."""
+        return SessionStatus(
+            session_key=99999,
+            session_name="Race",
+            session_type="Race",
+            session_status="started",
+            circuit_short_name="Mock Circuit",
+            meeting_name="Mock Grand Prix 2026",
+            current_lap=self.tick // 10 + 1,  # Increment lap every 10 ticks
+            total_laps=50,
+            track_status="green",
+            gmt_offset="+00:00",
+            updated_at=datetime.now()
+        )
+    
+    def reset(self):
+        """Reset the mock data generator."""
+        self.tick = 0
+        self.base_gaps = self._initialize_gaps()
+
+
+# Global instance
+mock_data_generator = MockDataGenerator()

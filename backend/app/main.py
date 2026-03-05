@@ -13,6 +13,7 @@ from app.openf1_client import openf1_client, OpenF1APIError
 from app.session import session_manager
 from app.state import state_manager
 from app.battle import detect_battles
+from app.mock_data import mock_data_generator
 
 # Configure logging
 logging.basicConfig(
@@ -33,6 +34,15 @@ async def poll_session_status():
     
     while True:
         try:
+            # TEST MODE: Use mock session
+            if config.TEST_MODE:
+                logger.info("TEST MODE: Using mock session")
+                session_manager.current_session = mock_data_generator.generate_mock_session()
+                health_manager.active_session = True
+                await asyncio.sleep(config.POLL_SESSION_INTERVAL_S)
+                continue
+            
+            # NORMAL MODE: Real OpenF1 session
             await session_manager.update_current_session()
             
             if session_manager.is_session_active():
@@ -57,6 +67,23 @@ async def poll_positions():
     
     while True:
         try:
+            # TEST MODE: Use mock data
+            if config.TEST_MODE:
+                logger.info("TEST MODE: Generating mock driver data")
+                mock_states = mock_data_generator.generate_driver_states()
+                
+                # Update state manager with mock data
+                for state in mock_states:
+                    state_manager.update_driver_state(state)
+                
+                state_manager.detect_pit_windows()
+                health_manager.record_successful_position_poll()
+                health_manager.active_session = True
+                
+                await asyncio.sleep(config.POLL_POSITIONS_INTERVAL_S)
+                continue
+            
+            # NORMAL MODE: Real OpenF1 data
             # Only poll if we have an active session
             if not session_manager.is_session_active():
                 await asyncio.sleep(5)

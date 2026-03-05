@@ -31,9 +31,10 @@ def calculate_battle_score(
     gap_score = max(0, 1 - (gap_s / config.BATTLE_MAX_GAP_S))
     
     # Closing rate contribution (0-1)
+    # Negative closing_rate = gap is closing (chaser catching up) = exciting!
     closing_score = 0.0
-    if closing_rate is not None:
-        closing_score = min(1.0, max(0, closing_rate * 10))
+    if closing_rate is not None and closing_rate < 0:
+        closing_score = min(1.0, abs(closing_rate) * 10)
     
     # Pace advantage contribution (0-1)
     pace_score = 0.0
@@ -110,7 +111,10 @@ def detect_battles(
     global _battle_tracker
     
     if not driver_states:
+        logger.warning("detect_battles: No driver states provided")
         return []
+    
+    logger.debug(f"detect_battles: Processing {len(driver_states)} drivers")
     
     # 1. Sort drivers by position
     sorted_drivers = sorted(driver_states, key=lambda d: d.position)
@@ -125,12 +129,22 @@ def detect_battles(
         
         # Skip if positions don't match expected pattern
         if ahead.position >= chaser.position:
+            logger.debug(f"Skipping pair: positions don't match (ahead P{ahead.position} >= chaser P{chaser.position})")
             continue
         
         # Get gap
         gap = chaser.gap_to_ahead_s
-        if gap is None or gap <= 0 or gap > config.BATTLE_MAX_GAP_S:
+        if gap is None:
+            logger.debug(f"Skipping P{chaser.position} vs P{ahead.position}: gap is None")
             continue
+        if gap <= 0:
+            logger.debug(f"Skipping P{chaser.position} vs P{ahead.position}: gap <= 0 ({gap})")
+            continue
+        if gap > config.BATTLE_MAX_GAP_S:
+            logger.debug(f"Skipping P{chaser.position} vs P{ahead.position}: gap too large ({gap:.2f}s > {config.BATTLE_MAX_GAP_S}s)")
+            continue
+        
+        logger.debug(f"Checking battle: P{chaser.position} ({chaser.full_name}) vs P{ahead.position} ({ahead.full_name}), gap={gap:.2f}s")
         
         # Calculate closing rate from history
         chaser_history = driver_histories.get(chaser.driver_number, [])
@@ -160,6 +174,11 @@ def detect_battles(
             intensity = "WATCH"
         else:
             intensity = "NONE"
+        
+        logger.debug(
+            f"  Battle P{chaser.position} vs P{ahead.position}: "
+            f"gap={gap:.2f}s, closing_rate={closing_rate}, score={score:.3f}, intensity={intensity}"
+        )
         
         # Skip if not interesting
         if intensity == "NONE":
