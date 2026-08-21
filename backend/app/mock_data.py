@@ -3,9 +3,20 @@ Mock data generator for testing battle detection without live F1 sessions.
 """
 from datetime import datetime, timedelta
 from typing import List
+import math
 import random
 
 from app.models import DriverState, SessionStatus
+from app.config import config
+
+
+# Real gaps come from /intervals, which refreshes slower than the position poll.
+# The mock reproduces that so TEST_MODE exercises the same repeated-sample path
+# as live data instead of handing the detector a fresh gap every tick.
+TICKS_PER_INTERVAL_REFRESH = 3
+
+# Pace advantage (s/lap, negative = chaser quicker) for the scripted battles.
+MOCK_PACE_ADVANTAGE = {2: -0.45, 4: -0.35, 7: 0.10, 10: -0.30}
 
 
 # Mock driver data
@@ -69,59 +80,89 @@ class MockDataGenerator:
         """Generate mock driver states with evolving battles."""
         self.tick += 1
         states = []
-        
+
+        now = datetime.now()
+
+        # Gaps advance only when /intervals would have refreshed, and carry the
+        # timestamp of that refresh rather than of this poll.
+        interval_tick = self.tick // TICKS_PER_INTERVAL_REFRESH
+        ticks_since_refresh = self.tick % TICKS_PER_INTERVAL_REFRESH
+        gap_updated_at = now - timedelta(
+            seconds=ticks_since_refresh * config.POLL_POSITIONS_INTERVAL_S
+        )
+
+        lap_number = self.current_lap()
         cumulative_gap_to_leader = 0.0
-        
+
         for position in range(1, 21):
             idx = position - 1
             driver = MOCK_DRIVERS[idx]
-            
+
             # Get base gap to car ahead
             gap_to_ahead = self.base_gaps[idx]
-            
+
             # Add some dynamic behavior - use oscillating patterns for realistic battles
-            import math
-            
             if position == 2:
-                # P2 is catching P1 (HOT battle) - slow, consistent closing
-                gap_to_ahead = 0.35 + 0.08 * math.sin(self.tick * 0.2) - (self.tick * 0.005)
+                # P2 is catching P1 - slow, consistent closing
+                gap_to_ahead = 0.35 + 0.08 * math.sin(interval_tick * 0.2) - (interval_tick * 0.005)
                 gap_to_ahead = max(0.25, min(0.5, gap_to_ahead))
             elif position == 4:
-                # P4 is slowly catching P3 (WATCH battle) - gentle oscillation
-                gap_to_ahead = 0.45 + 0.08 * math.sin(self.tick * 0.15) - (self.tick * 0.003)
+                # P4 is slowly catching P3 - gentle oscillation
+                gap_to_ahead = 0.45 + 0.08 * math.sin(interval_tick * 0.15) - (interval_tick * 0.003)
                 gap_to_ahead = max(0.35, min(0.6, gap_to_ahead))
             elif position == 7:
-                # P7 maintaining gap to P6 - consistent pressure
-                gap_to_ahead = 1.5 + 0.15 * math.sin(self.tick * 0.3)
+                # P7 maintaining gap to P6 - consistent pressure, no pace advantage
+                gap_to_ahead = 1.5 + 0.15 * math.sin(interval_tick * 0.3)
             elif position == 10:
                 # P10 and P9 having a close battle - gentle oscillation staying close
-                gap_to_ahead = 0.95 + 0.15 * math.sin(self.tick * 0.3) - (self.tick * 0.004)
+                gap_to_ahead = 0.95 + 0.15 * math.sin(interval_tick * 0.3) - (interval_tick * 0.004)
                 gap_to_ahead = max(0.75, min(1.15, gap_to_ahead))
             else:
                 # Others have stable gaps with small variations
                 gap_to_ahead += random.uniform(-0.05, 0.05)
-            
+
             # Update cumulative gap to leader
             cumulative_gap_to_leader += gap_to_ahead
-            
+
             state = DriverState(
                 driver_number=driver["number"],
                 full_name=driver["name"],
                 team_name=driver["team"],
                 position=position,
-                last_lap_time_s=None,
+                last_lap_time_s=self._lap_time(position, lap_number),
                 gap_to_leader_s=cumulative_gap_to_leader if position > 1 else 0.0,
                 gap_to_ahead_s=gap_to_ahead if position > 1 else None,
                 tire_compound="SOFT" if position <= 10 else "MEDIUM",
                 tire_age_laps=random.randint(5, 25),
                 pit_stops_count=random.randint(0, 2),
-                updated_at=datetime.now(),
+                updated_at=now,
+                gap_updated_at=gap_updated_at if position > 1 else None,
                 data_confidence="high"
             )
-            
+
             states.append(state)
-        
+
         return states
+
+    def _lap_time(self, position: int, lap_number: int) -> float:
+        """
+        Lap time for a driver, held constant for the duration of a lap.
+
+        Cars further back are nominally slower, except where MOCK_PACE_ADVANTAGE
+        scripts a chaser to be quicker than the car it is following.
+        """
+        base = 90.0 + (position - 1) * 0.15
+        advantage = MOCK_PACE_ADVANTAGE.get(position)
+        if advantage is not None:
+            # Relative to the car ahead, which is one grid slot quicker nominally
+            base = 90.0 + (position - 2) * 0.15 + advantage
+
+        # Deterministic per-lap variation so pace deltas stay stable within a lap
+        return round(base + 0.05 * math.sin(lap_number * 0.7), 3)
+
+    def current_lap(self) -> int:
+        """Lap number implied by the current tick."""
+        return self.tick // 10 + 1
     
     def generate_mock_session(self) -> SessionStatus:
         """Generate a mock session."""
@@ -132,7 +173,7 @@ class MockDataGenerator:
             session_status="started",
             circuit_short_name="Mock Circuit",
             meeting_name="Mock Grand Prix 2026",
-            current_lap=self.tick // 10 + 1,  # Increment lap every 10 ticks
+            current_lap=self.current_lap(),
             total_laps=50,
             track_status="green",
             gmt_offset="+00:00",

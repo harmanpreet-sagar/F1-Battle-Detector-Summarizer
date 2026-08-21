@@ -16,6 +16,19 @@ class OpenF1APIError(Exception):
     pass
 
 
+def _latest_by_driver(rows: List[Dict], key) -> List[Dict]:
+    """Keep one row per driver_number - the one with the highest `key`."""
+    latest: Dict[int, Dict] = {}
+    for row in rows:
+        driver_num = row.get("driver_number")
+        if driver_num is None:
+            continue
+        current = latest.get(driver_num)
+        if current is None or (key(row) or "") > (key(current) or ""):
+            latest[driver_num] = row
+    return list(latest.values())
+
+
 class OpenF1Client:
     """Client for interacting with the OpenF1 API."""
     
@@ -87,20 +100,39 @@ class OpenF1Client:
         OpenF1 returns data sorted by date, so we get the last entry per driver.
         """
         positions = await self.get_positions(session_key)
-        
-        # Group by driver_number and take the latest (last) entry for each
-        latest_by_driver = {}
-        for pos in positions:
-            driver_num = pos.get("driver_number")
-            if driver_num:
-                latest_by_driver[driver_num] = pos
-        
-        return list(latest_by_driver.values())
+        return _latest_by_driver(positions, key=lambda r: r.get("date"))
     
+    async def get_intervals(self, session_key: int, driver_number: Optional[int] = None) -> List[Dict]:
+        """
+        Get interval data for a session.
+
+        NOTE: the /position endpoint carries only position numbers. Gap-to-ahead
+        (`interval`) and `gap_to_leader` live here, on /intervals.
+
+        Args:
+            session_key: Session identifier
+            driver_number: Optional driver number to filter by
+        """
+        params = {"session_key": session_key}
+        if driver_number:
+            params["driver_number"] = driver_number
+        return await self._request("intervals", params)
+
+    async def get_latest_intervals(self, session_key: int) -> List[Dict]:
+        """
+        Get the most recent interval row for each driver in a session.
+
+        /intervals refreshes roughly every 4s, so the same row is expected to be
+        returned across several position polls. Callers use each row's own `date`
+        to tell a fresh sample from a repeated one.
+        """
+        rows = await self.get_intervals(session_key)
+        return _latest_by_driver(rows, key=lambda r: r.get("date"))
+
     async def get_laps(self, session_key: int, driver_number: Optional[int] = None) -> List[Dict]:
         """
         Get lap data for a session.
-        
+
         Args:
             session_key: Session identifier
             driver_number: Optional driver number to filter by
@@ -109,6 +141,27 @@ class OpenF1Client:
         if driver_number:
             params["driver_number"] = driver_number
         return await self._request("laps", params)
+
+    async def get_latest_laps(self, session_key: int, count: int = 3) -> Dict[int, List[Dict]]:
+        """
+        Get each driver's last `count` completed laps, oldest first.
+
+        Rows without a `lap_duration` are the lap currently in progress and are
+        skipped — only completed laps carry a usable time.
+        """
+        rows = await self.get_laps(session_key)
+
+        by_driver: Dict[int, List[Dict]] = {}
+        for row in rows:
+            driver_num = row.get("driver_number")
+            if driver_num is None or row.get("lap_duration") is None:
+                continue
+            by_driver.setdefault(driver_num, []).append(row)
+
+        return {
+            driver_num: sorted(laps, key=lambda r: r.get("lap_number") or 0)[-count:]
+            for driver_num, laps in by_driver.items()
+        }
     
     async def get_drivers(self, session_key: int) -> List[Dict]:
         """Get driver information for a session."""

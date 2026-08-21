@@ -19,6 +19,14 @@ class DriverState(BaseModel):
     tire_age_laps: Optional[int] = None
     pit_stops_count: int = 0
     updated_at: datetime
+    gap_updated_at: Optional[datetime] = Field(
+        default=None,
+        description=(
+            "Timestamp of the /intervals row the gaps came from. Lags updated_at "
+            "because intervals refresh slower than positions; repeated across polls "
+            "when no fresh interval has arrived."
+        ),
+    )
     data_confidence: Literal["high", "medium", "low"] = "high"
 
 
