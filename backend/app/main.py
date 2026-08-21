@@ -64,7 +64,12 @@ async def poll_positions():
     """Background task to poll position data and update driver states."""
     retry_delay = 1.0
     max_retry_delay = 30.0
-    
+
+    # Lap data changes once a lap, so it is refreshed on its own slower cadence
+    # and reused across position polls.
+    cached_laps: dict = {}
+    laps_fetched_at = None
+
     while True:
         try:
             # TEST MODE: Use mock data
@@ -92,19 +97,36 @@ async def poll_positions():
             session = session_manager.get_current_session()
             session_key = session.session_key
             
-            # Get latest positions and driver info
+            # Get latest positions and driver info. Gaps come from /intervals -
+            # /position carries position numbers only.
             positions = await openf1_client.get_latest_positions(session_key)
+            intervals = await openf1_client.get_latest_intervals(session_key)
             drivers_data = await openf1_client.get_drivers(session_key)
-            
+
+            # Refresh lap data on its own cadence
+            now = asyncio.get_event_loop().time()
+            if laps_fetched_at is None or (now - laps_fetched_at) >= config.POLL_LAPS_INTERVAL_S:
+                cached_laps = await openf1_client.get_latest_laps(
+                    session_key, count=config.BATTLE_PACE_TREND_WINDOW
+                )
+                laps_fetched_at = now
+                health_manager.record_successful_lap_poll()
+                logger.debug(f"Refreshed lap data for {len(cached_laps)} drivers")
+
             # Create driver info lookup
             drivers_info = {d["driver_number"]: d for d in drivers_data if "driver_number" in d}
-            
+
             # Update state manager
             if positions:
-                state_manager.update_from_openf1_positions(positions, drivers_info)
+                state_manager.update_from_openf1_positions(
+                    positions, drivers_info, intervals=intervals, laps=cached_laps
+                )
                 state_manager.detect_pit_windows()
                 health_manager.record_successful_position_poll()
-                logger.debug(f"Updated positions for {len(positions)} drivers")
+                logger.debug(
+                    f"Updated positions for {len(positions)} drivers "
+                    f"({len(intervals)} interval rows)"
+                )
             
             # Reset retry delay on success
             retry_delay = config.POLL_POSITIONS_INTERVAL_S

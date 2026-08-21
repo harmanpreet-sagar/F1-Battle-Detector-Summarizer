@@ -12,6 +12,29 @@ from app.config import config
 logger = logging.getLogger(__name__)
 
 
+def parse_openf1_timestamp(date_str: Optional[str]) -> Optional[datetime]:
+    """Parse an OpenF1 ISO timestamp. Returns None if absent or malformed."""
+    if not date_str:
+        return None
+    try:
+        return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+    except ValueError:
+        logger.warning(f"Unparseable OpenF1 timestamp: {date_str!r}")
+        return None
+
+
+def parse_gap(value: Any) -> Optional[float]:
+    """
+    Coerce an OpenF1 gap field to seconds.
+
+    /intervals reports lapped cars as strings like "+1 LAP", and the leader's
+    own interval is null. Neither is a gap in seconds, so both become None.
+    """
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
 class StateManager:
     """Manages in-memory state for all drivers."""
     
@@ -57,49 +80,101 @@ class StateManager:
             }
         return None
     
-    def update_from_openf1_positions(self, positions: List[Dict], drivers_info: Dict[int, Dict]):
+    def update_from_openf1_positions(
+        self,
+        positions: List[Dict],
+        drivers_info: Dict[int, Dict],
+        intervals: Optional[List[Dict]] = None,
+        laps: Optional[Dict[int, List[Dict]]] = None,
+    ):
         """
         Update driver states from OpenF1 position data.
-        
+
         Args:
-            positions: List of position data from OpenF1
+            positions: List of position data from OpenF1 (/position)
             drivers_info: Dict mapping driver_number to driver info (name, team, etc.)
+            intervals: Latest /intervals row per driver. /position carries no gap
+                fields, so without this every gap is None and no battle is detectable.
+            laps: Recent completed laps per driver, oldest first (/laps).
         """
+        intervals_by_driver = {
+            row["driver_number"]: row
+            for row in (intervals or [])
+            if row.get("driver_number") is not None
+        }
+        laps = laps or {}
+
         for pos_data in positions:
             driver_num = pos_data.get("driver_number")
             if not driver_num:
                 continue
-            
+
             driver_info = drivers_info.get(driver_num, {})
-            
+
             # Calculate data confidence based on recency
-            date_str = pos_data.get("date")
-            updated_at = datetime.fromisoformat(date_str.replace('Z', '+00:00')) if date_str else datetime.now()
+            updated_at = parse_openf1_timestamp(pos_data.get("date")) or datetime.now()
             age_seconds = (datetime.now(updated_at.tzinfo) - updated_at).total_seconds()
-            
+
             if age_seconds < config.DATA_CONFIDENCE_MEDIUM_S:
                 confidence = "high"
             elif age_seconds < config.DATA_STALE_THRESHOLD_S:
                 confidence = "medium"
             else:
                 confidence = "low"
-            
+
+            gap_to_ahead, gap_to_leader, gap_updated_at = self._resolve_gaps(
+                driver_num, intervals_by_driver.get(driver_num)
+            )
+
+            # A gap that has not refreshed in several interval cycles is no longer
+            # trustworthy for closing-rate work, even if the position row is fresh.
+            if gap_updated_at is not None:
+                gap_age = (datetime.now(gap_updated_at.tzinfo) - gap_updated_at).total_seconds()
+                if gap_age > config.INTERVAL_STALE_THRESHOLD_S:
+                    confidence = "low"
+
+            driver_laps = laps.get(driver_num) or []
+            last_lap_time_s = driver_laps[-1].get("lap_duration") if driver_laps else None
+
             driver_state = DriverState(
                 driver_number=driver_num,
                 full_name=driver_info.get("full_name") or driver_info.get("name_acronym", f"Driver {driver_num}"),
                 team_name=driver_info.get("team_name", "Unknown"),
                 position=pos_data.get("position", 20),
-                last_lap_time_s=None,  # Will be filled from lap data
-                gap_to_leader_s=pos_data.get("gap_to_leader"),
-                gap_to_ahead_s=pos_data.get("interval"),
+                last_lap_time_s=last_lap_time_s,
+                gap_to_leader_s=gap_to_leader,
+                gap_to_ahead_s=gap_to_ahead,
                 tire_compound=None,  # Not in position data
                 tire_age_laps=None,
                 pit_stops_count=0,  # Will be calculated
                 updated_at=updated_at,
+                gap_updated_at=gap_updated_at,
                 data_confidence=confidence
             )
-            
+
             self.update_driver_state(driver_state)
+
+    def _resolve_gaps(self, driver_num: int, interval_row: Optional[Dict]):
+        """
+        Resolve (gap_to_ahead, gap_to_leader, gap_updated_at) for one driver.
+
+        /intervals lags /position, so a poll may bring no row for a driver at all.
+        Carrying the previous gap forward keeps the history continuous; carrying
+        its original timestamp forward is what stops a repeated sample from being
+        mistaken for a fresh one by the closing-rate calculation.
+        """
+        if interval_row is not None:
+            return (
+                parse_gap(interval_row.get("interval")),
+                parse_gap(interval_row.get("gap_to_leader")),
+                parse_openf1_timestamp(interval_row.get("date")),
+            )
+
+        previous = self.current_state.get(driver_num)
+        if previous is None:
+            return None, None, None
+
+        return previous.gap_to_ahead_s, previous.gap_to_leader_s, previous.gap_updated_at
     
     def detect_pit_windows(self):
         """

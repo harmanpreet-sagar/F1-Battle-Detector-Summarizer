@@ -33,6 +33,8 @@ class Config:
     # Data quality
     DATA_STALE_THRESHOLD_S: float = float(os.getenv("DATA_STALE_THRESHOLD_S", "5.0"))
     DATA_CONFIDENCE_MEDIUM_S: float = float(os.getenv("DATA_CONFIDENCE_MEDIUM_S", "3.0"))
+    # /intervals refreshes ~every 4s; allow ~3 missed refreshes before the gap is stale
+    INTERVAL_STALE_THRESHOLD_S: float = float(os.getenv("INTERVAL_STALE_THRESHOLD_S", "12.0"))
     
     # CORS
     CORS_ORIGINS: List[str] = os.getenv(

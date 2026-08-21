@@ -16,6 +16,11 @@ logger = logging.getLogger(__name__)
 _battle_tracker: Dict[str, tuple[Battle, datetime]] = {}
 
 
+def reset_battle_tracker():
+    """Drop all tracked battles (session change, or test isolation)."""
+    _battle_tracker.clear()
+
+
 def calculate_battle_score(
     gap_s: float,
     closing_rate: Optional[float],
@@ -56,6 +61,16 @@ def calculate_battle_score(
     return raw_score
 
 
+def _gap_sample_time(state: DriverState) -> datetime:
+    """
+    When the gap on this state was actually measured.
+
+    Gaps come from /intervals, which refreshes slower than the position poll, so
+    the interval timestamp - not the poll timestamp - is the real sample time.
+    """
+    return state.gap_updated_at or state.updated_at
+
+
 def calculate_closing_rate(history: List[DriverState]) -> Optional[float]:
     """
     Calculate closing rate from gap history.
@@ -63,33 +78,73 @@ def calculate_closing_rate(history: List[DriverState]) -> Optional[float]:
     """
     if len(history) < 2:
         return None
-    
+
     # Use last N points for trend
     window_size = min(config.BATTLE_GAP_TREND_WINDOW, len(history))
     recent = history[-window_size:]
-    
-    # Filter out None gaps
-    valid_points = [(i, s.gap_to_ahead_s) for i, s in enumerate(recent) if s.gap_to_ahead_s is not None]
-    
+
+    # Keep one point per distinct gap measurement. The same /intervals row is
+    # served across several position polls; counting it repeatedly would read as
+    # a stalled gap and flatten the rate toward zero.
+    valid_points = []
+    for state in recent:
+        if state.gap_to_ahead_s is None:
+            continue
+        sample_time = _gap_sample_time(state)
+        if valid_points and valid_points[-1][0] == sample_time:
+            continue
+        valid_points.append((sample_time, state.gap_to_ahead_s))
+
     if len(valid_points) < 2:
         return None
-    
-    # Simple linear regression or just compare first and last
-    first_idx, first_gap = valid_points[0]
-    last_idx, last_gap = valid_points[-1]
-    
-    if first_idx == last_idx:
+
+    first_time, first_gap = valid_points[0]
+    last_time, last_gap = valid_points[-1]
+
+    # Measure the span from the timestamps we already store rather than assuming
+    # the poll interval held - retries and slow responses make it drift.
+    time_span = (last_time - first_time).total_seconds()
+
+    if time_span <= 0:
         return None
-    
+
     # Closing rate: change in gap over time
     # Negative = chaser is closing in
-    gap_change = last_gap - first_gap
-    time_span = (last_idx - first_idx) * config.POLL_POSITIONS_INTERVAL_S
-    
-    if time_span > 0:
-        return gap_change / time_span
-    
-    return None
+    return (last_gap - first_gap) / time_span
+
+
+def calculate_pace_delta(
+    chaser_history: List[DriverState],
+    ahead_history: List[DriverState],
+    window: Optional[int] = None
+) -> Optional[float]:
+    """
+    Mean lap-time delta over the last N laps, in seconds per lap.
+
+    Negative = the chaser is the faster car. A car sitting 0.3s back *and* half a
+    second a lap quicker is the thing a battle actually is; without this term the
+    pace weight in the score is dead.
+    """
+    window = window or config.BATTLE_PACE_TREND_WINDOW
+
+    def recent_lap_times(history: List[DriverState]) -> List[float]:
+        # Consecutive polls repeat the same lap time until a new lap completes.
+        times = []
+        for state in history:
+            if state.last_lap_time_s is None:
+                continue
+            if times and times[-1] == state.last_lap_time_s:
+                continue
+            times.append(state.last_lap_time_s)
+        return times[-window:]
+
+    chaser_times = recent_lap_times(chaser_history)
+    ahead_times = recent_lap_times(ahead_history)
+
+    if not chaser_times or not ahead_times:
+        return None
+
+    return (sum(chaser_times) / len(chaser_times)) - (sum(ahead_times) / len(ahead_times))
 
 
 def detect_battles(
@@ -148,10 +203,11 @@ def detect_battles(
         
         # Calculate closing rate from history
         chaser_history = driver_histories.get(chaser.driver_number, [])
+        ahead_history = driver_histories.get(ahead.driver_number, [])
         closing_rate = calculate_closing_rate(chaser_history)
-        
-        # Pace delta (will be implemented when we add lap data)
-        pace_delta = None
+
+        # Pace delta from lap times (negative = chaser is the faster car)
+        pace_delta = calculate_pace_delta(chaser_history, ahead_history)
         
         # 3. Determine battle flags
         flags = BattleFlags(
@@ -200,7 +256,11 @@ def detect_battles(
         # Generate explanation
         explanation_parts = []
         if closing_rate and closing_rate < 0:
-            explanation_parts.append(f"Closing at {abs(closing_rate):.2f}s/s")
+            # Realistic rates are hundredths of a second per second; report the
+            # gap eaten per minute, which is legible at that scale.
+            explanation_parts.append(f"Closing {abs(closing_rate) * 60:.2f}s/min")
+        if pace_delta is not None and pace_delta < 0:
+            explanation_parts.append(f"{abs(pace_delta):.2f}s/lap quicker")
         if gap < 1.0:
             explanation_parts.append("Within DRS range")
         if flags.pit_window_active:
