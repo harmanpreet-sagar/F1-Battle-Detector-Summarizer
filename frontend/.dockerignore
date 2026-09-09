@@ -1,0 +1,12 @@
+# Host-built artifacts. Without this, `COPY . .` ships 332MB of Windows-built
+# node_modules into an Alpine image, on top of the npm ci the build just ran.
+node_modules
+.next
+out
+
+# Local config - the API URL is passed as a build arg instead
+.env.local
+.env*.local
+
+npm-debug.log*
+.git

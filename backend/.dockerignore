@@ -1,0 +1,12 @@
+__pycache__
+*.py[cod]
+.pytest_cache
+.coverage
+coverage.xml
+venv
+.venv
+
+# Runtime state and secrets: data/ is a mounted volume, .env is passed by
+# compose via env_file. Neither belongs baked into the image.
+data
+.env

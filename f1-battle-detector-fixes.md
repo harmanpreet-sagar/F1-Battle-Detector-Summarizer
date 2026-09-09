@@ -4,16 +4,45 @@ Review of `F1-Battle-Detector-Summarizer` @ `2bb48a8` (10 commits, Feb 23 – Ma
 Backend installed and run against `TEST_MODE`; every endpoint exercised; scoring function probed directly;
 OpenF1 field schema verified against the [official docs](https://openf1.org/docs).
 
-**Current state:** architecture is sound and ~1,750 LOC are real. But the detector returns **zero battles
-in every mode**, for two independent reasons — and it could never have worked against live data.
+**State at review time:** architecture was sound and ~1,750 LOC were real, but the detector returned
+**zero battles in every mode**, for two independent reasons — and could never have worked against
+live data.
 
-**Verdict:** ~2–4 hours of work to make it functional. Worth doing before it goes on a resume.
+**Verdict at review time:** ~2–4 hours of work to make it functional. Worth doing before it goes on a
+resume. *(Done — see Status below.)*
 
 ---
 
-## P0 — Blocking. The app cannot detect a battle today.
+## Status — all of P0–P3 fixed
 
-### P0-1 · Live mode reads gap data from an endpoint that doesn't return it
+Every item below has been fixed and merged to `main`. Kept as a record of what was wrong and why,
+not as an open backlog.
+
+| Section | Status | Landed in |
+|---|---|---|
+| **P0-1**, **P0-2**, **P1-3** | ✅ Fixed | [#3](../../pull/3) `3edef25` |
+| **P1-1**, **P1-2** | ✅ Fixed | [#4](../../pull/4) `85e5ef5` |
+| **P2-1** … **P2-4** | ✅ Fixed | [#6](../../pull/6) `ecca407` |
+| **P3** (all 5) | ✅ Fixed | [#7](../../pull/7) `00f373b` |
+| CI, not in the original review | ✅ Added | [#5](../../pull/5) `fd54e9d` |
+
+Backend tests went from 4-of-6-passing with four `# TODO` bodies to **59 passing**.
+
+**Still open**, both added after this review: the [frontend Docker image size](#open-frontend-docker-image-is-119gb--open),
+and the [ML upgrade](#next-the-ml-upgrade--open).
+
+Three limitations were accepted rather than fixed, and are documented in the README:
+
+- **Opening laps under-detect.** Before any driver completes a lap there is no pace delta, so the
+  score ceiling returns to 0.500 against a 0.55 threshold.
+- **Blue flags are undetectable** under the current pairing model — see P2-1.
+- **No frontend tests.** `next build` type-checks the app in CI; that is the whole of it.
+
+---
+
+## P0 — Blocking. The app cannot detect a battle today. ✅ FIXED
+
+### P0-1 · Live mode reads gap data from an endpoint that doesn't return it ✅ FIXED
 
 `state.py:93-94` reads:
 
@@ -62,7 +91,7 @@ Then join intervals onto positions by `driver_number` in the poll loop and pass 
 
 ---
 
-### P0-2 · The WATCH threshold is mathematically unreachable
+### P0-2 · The WATCH threshold is mathematically unreachable ✅ FIXED
 
 `battle.py:154`:
 
@@ -113,9 +142,9 @@ The absence of that test is why this survived 10 commits.
 
 ---
 
-## P1 — Correctness bugs that will produce visibly wrong output
+## P1 — Correctness bugs that will produce visibly wrong output ✅ FIXED
 
-### P1-1 · Detection runs in the request handler, so the stability filter counts HTTP requests
+### P1-1 · Detection runs in the request handler, so the stability filter counts HTTP requests ✅ FIXED
 
 `main.py:250` calls `detect_battles()` inside `GET /battles/top`. The module-global `_battle_tracker`
 in `battle.py:16` is therefore mutated **per HTTP request**, not per data poll.
@@ -133,7 +162,7 @@ the race, and the duplicated work in one move.
 
 ---
 
-### P1-2 · Battles are evicted after 30s of *existing*, not 30s of *absence*
+### P1-2 · Battles are evicted after 30s of *existing*, not 30s of *absence* ✅ FIXED
 
 `battle.py:233-252`. On re-detection you preserve the original `first_seen`:
 
@@ -164,7 +193,7 @@ _battle_tracker = {bid: v for bid, v in _battle_tracker.items()
 
 ---
 
-### P1-3 · Closing rate assumes perfectly regular polling
+### P1-3 · Closing rate assumes perfectly regular polling ✅ FIXED
 
 `battle.py:87`:
 
@@ -186,9 +215,9 @@ if time_span <= 0:
 
 ---
 
-## P2 — Dead and incorrect logic
+## P2 — Dead and incorrect logic ✅ FIXED
 
-### P2-1 · `blue_flag_situation` can never be true
+### P2-1 · `blue_flag_situation` can never be true ✅ FIXED
 
 `battle.py:160`:
 
@@ -200,14 +229,14 @@ blue_flag_situation=abs(ahead.position - chaser.position) > 5,
 The condition is unreachable. Blue flags concern *lapped* cars, which needs a lap-count comparison,
 not a position delta. Either implement it against lap data or delete the field.
 
-### P2-2 · `StateManager.detect_pit_windows()` is a no-op
+### P2-2 · `StateManager.detect_pit_windows()` is a no-op ✅ FIXED
 
 `state.py:104-126` computes a gap delta, logs it, and comments *"We'll use this information in battle
 detection"* — but sets no flag and returns nothing. It's called every poll from `main.py:79` and does
 nothing. Meanwhile `battle.detect_pit_window()` is a **second, separate implementation** that is
 actually used. Delete the dead one or make it the single source of truth.
 
-### P2-3 · History depth silently caps the trend endpoint
+### P2-3 · History depth silently caps the trend endpoint ✅ FIXED
 
 `state.py:21` sets `max_history_length = config.BATTLE_GAP_TREND_WINDOW` (**6**). But
 `GET /drivers/{n}/trend` defaults to `points=10` and can never return more than 6. At a 1.5s poll
@@ -216,26 +245,28 @@ that's 9 seconds of history — thin for a closing-rate regression and thin for 
 **Fix:** decouple them. `HISTORY_MAX_LEN = 60` (~90s) with the trend window as a separate read-slice.
 Memory cost is trivial: 20 drivers × 60 states.
 
-### P2-4 · State is never reset between sessions
+### P2-4 · State is never reset between sessions ✅ FIXED
 
 `StateManager.clear()` exists and is never called; `_battle_tracker` has no reset at all. Across a
 session change you'll carry stale driver states and battle IDs. Call both when `session_key` changes.
 
 ---
 
-## P3 — Hygiene
+## P3 — Hygiene ✅ FIXED
 
-| Item | Detail |
-|---|---|
-| **README is stale** | Still says *"starter skeleton with stub implementations"* and lists battle detection as 🚧. It's substantially built. This undersells the project to anyone who opens the repo — including recruiters. |
-| **Tests are stubs** | 4 of 6 pass; the 2 failures are missing `pytest-asyncio`, and 4 of the 6 test bodies are `# TODO`. Add it to `requirements-dev.txt`. |
-| **No scoring tests** | The P0-2 bug is exactly what a table-driven test over `calculate_battle_score` would have caught on day one. Highest-value test to write. |
-| **Stray file** | `backend/.env~` (editor backup) is in the working tree. Gitignored, but delete it. |
-| **`Watchlist.tsx`** | 18 lines, `// TODO: Implement watchlist state management`. Either build it or remove it from the README feature list — right now the README promises a feature that renders nothing. |
+| Item | Status | Detail |
+|---|---|---|
+| **README is stale** | ✅ Rewritten | Still says *"starter skeleton with stub implementations"* and lists battle detection as 🚧. It's substantially built. This undersells the project to anyone who opens the repo — including recruiters. |
+| **Tests are stubs** | ✅ Fixed | 4 of 6 pass; the 2 failures are missing `pytest-asyncio`, and 4 of the 6 test bodies are `# TODO`. Add it to `requirements-dev.txt`. |
+| **No scoring tests** | ✅ Written | The P0-2 bug is exactly what a table-driven test over `calculate_battle_score` would have caught on day one. Highest-value test to write. |
+| **Stray file** | ✅ Deleted | `backend/.env~` (editor backup) is in the working tree. Gitignored, but delete it. |
+| **`Watchlist.tsx`** | ✅ Removed | 18 lines, `// TODO: Implement watchlist state management`. Either build it or remove it from the README feature list — right now the README promises a feature that renders nothing. |
 
 ---
 
-## Suggested order
+## Suggested order ✅ COMPLETE
+
+*Followed in this order; all six steps done.*
 
 1. **P0-1** — `/intervals` client + join. *Without this nothing else matters.*
 2. **P0-2(a)** — compute `pace_delta`; populate `last_lap_time_s`.
@@ -244,11 +275,43 @@ session change you'll carry stale driver states and battle IDs. Call both when `
 5. **P1-2**, **P1-3** — `last_seen` eviction, real timestamps.
 6. **P2** cleanup, then rewrite the README to describe what it actually does.
 
-Steps 1–3 get it working. Steps 4–6 make it something you'd want reviewed in an interview.
+Steps 1–3 got it working. Steps 4–6 made it something you'd want reviewed in an interview.
 
 ---
 
-## After it works: the ML upgrade
+## Open: frontend Docker image is 1.19GB ⬜ OPEN
+
+The backend image is 268MB. The frontend is **1.19GB** — four and a half times larger, for an app
+that builds to 91.6kB of JavaScript.
+
+`frontend/Dockerfile` is a single stage. It installs the full dependency tree, builds, and then keeps
+everything: `node_modules` with all 423 packages including devDependencies, the TypeScript compiler,
+ESLint, the Tailwind toolchain, and the complete `.next` build cache. `npm start` needs almost none
+of it.
+
+**Fix:** multi-stage build on Next's `standalone` output, which traces the server's actual imports
+and copies only those.
+
+1. `next.config.js` — add `output: 'standalone'`.
+2. **deps stage** — `npm ci`.
+3. **builder stage** — copy `node_modules`, copy source, `npm run build` (keep the
+   `NEXT_PUBLIC_API_BASE_URL` build arg; it still has to be present before the build).
+4. **runner stage** — `FROM node:18-alpine`, copy only `.next/standalone`, `.next/static` and
+   `public/`. Run as a non-root user. `CMD ["node", "server.js"]` — not `npm start`, which the
+   standalone output does not need.
+
+Expect roughly **200MB**, so about 6× smaller, with a faster cold start and a much smaller
+vulnerability surface — most of what `npm audit` finds in this image is in build tooling that has no
+business shipping to production.
+
+Worth doing before deploying to Render or Vercel: image size is pull time on every deploy, and free
+tiers are slow to pull.
+
+Not urgent for local development — `docker compose up --build` works correctly today.
+
+---
+
+## Next: the ML upgrade ⬜ OPEN
 
 This is the highest-value item in your entire portfolio, because it converts your weakest track into
 a real one.
