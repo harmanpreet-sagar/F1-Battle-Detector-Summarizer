@@ -4,7 +4,12 @@ Tests for the state manager, in particular the /position + /intervals join.
 import pytest
 from datetime import datetime, timedelta, timezone
 
+from app.config import config
+from app.models import DriverState, SessionStatus
+from app.session import SessionManager
 from app.state import StateManager, parse_gap, parse_openf1_timestamp
+
+BASE_TIME = datetime(2026, 1, 1, 12, 0, 0)
 
 
 def iso(offset_s: float = 0.0) -> str:
@@ -179,3 +184,107 @@ def test_mock_gaps_repeat_across_polls_like_real_intervals():
     for stamp in distinct:
         gaps = {gap for s, gap in samples if s == stamp}
         assert len(gaps) == 1
+
+
+# --------------------------------------------------------------------------
+# History depth (P2-3)
+# --------------------------------------------------------------------------
+
+def test_history_is_deeper_than_the_detection_trend_window():
+    """
+    History length used to be pinned to BATTLE_GAP_TREND_WINDOW (6), so
+    GET /drivers/{n}/trend could never return its default 10 points - about 9
+    seconds of history at a 1.5s poll.
+    """
+    assert config.HISTORY_MAX_LEN > config.BATTLE_GAP_TREND_WINDOW
+    assert config.HISTORY_MAX_LEN >= 10, "trend endpoint defaults to points=10"
+
+    manager = StateManager()
+    for i in range(config.HISTORY_MAX_LEN + 20):
+        manager.update_driver_state(
+            DriverState(
+                driver_number=44, full_name="L. Hamilton", team_name="Mercedes",
+                position=2, gap_to_ahead_s=0.5, updated_at=BASE_TIME,
+            )
+        )
+
+    history = manager.get_history(44)
+    assert len(history) == config.HISTORY_MAX_LEN
+
+
+def test_history_retains_enough_for_the_trend_endpoint_default():
+    """A driver polled for 15s can serve the endpoint's default 10 points."""
+    manager = StateManager()
+    for i in range(10):
+        manager.update_driver_state(
+            DriverState(
+                driver_number=1, full_name="M. Verstappen", team_name="Red Bull",
+                position=1, updated_at=BASE_TIME + timedelta(seconds=1.5 * i),
+            )
+        )
+
+    assert len(manager.get_history(1)[-10:]) == 10
+
+
+# --------------------------------------------------------------------------
+# Session lifecycle (P2-4)
+# --------------------------------------------------------------------------
+
+def _session(session_key: int) -> SessionStatus:
+    return SessionStatus(
+        session_key=session_key, session_name="Race", session_type="Race",
+        session_status="started", circuit_short_name="Test", meeting_name="Test GP",
+        gmt_offset="+00:00", updated_at=BASE_TIME,
+    )
+
+
+def test_new_session_key_is_reported_as_a_change():
+    manager = SessionManager()
+
+    assert manager.set_session(_session(1)) is True
+    assert manager.set_session(_session(2)) is True
+
+
+def test_same_session_key_is_not_a_change():
+    """The session endpoint is polled every 30s; re-reading it must not reset."""
+    manager = SessionManager()
+    manager.set_session(_session(1))
+
+    for _ in range(5):
+        assert manager.set_session(_session(1)) is False
+
+
+def test_losing_the_session_does_not_count_as_a_change():
+    """
+    A blip in the OpenF1 response, or the race ending, must not wipe a live
+    session's accumulated history - only arriving at a genuinely new session does.
+    """
+    manager = SessionManager()
+    manager.set_session(_session(1))
+
+    assert manager.set_session(None) is False
+    # ...and coming back to the same session is still not a change
+    assert manager.set_session(_session(1)) is False
+
+
+def test_returning_to_a_different_session_after_a_gap_is_a_change():
+    manager = SessionManager()
+    manager.set_session(_session(1))
+    manager.set_session(None)
+
+    assert manager.set_session(_session(2)) is True
+
+
+def test_clear_drops_all_driver_state():
+    manager = StateManager()
+    manager.update_driver_state(
+        DriverState(
+            driver_number=44, full_name="L. Hamilton", team_name="Mercedes",
+            position=2, updated_at=BASE_TIME,
+        )
+    )
+
+    manager.clear()
+
+    assert manager.get_all_current_states() == []
+    assert manager.get_history(44) == []

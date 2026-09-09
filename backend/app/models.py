@@ -34,7 +34,6 @@ class BattleFlags(BaseModel):
     """Flags indicating special battle conditions."""
     pit_window_active: bool = False
     under_yellow: bool = False
-    blue_flag_situation: bool = False
     data_quality_warning: bool = False
 
 
