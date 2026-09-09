@@ -28,8 +28,10 @@ not as an open backlog.
 
 Backend tests went from 4-of-6-passing with four `# TODO` bodies to **59 passing**.
 
-**Still open**, both added after this review: the [frontend Docker image size](#open-frontend-docker-image-is-119gb--open),
-and the [ML upgrade](#next-the-ml-upgrade--open).
+Added after this review and also fixed: the Docker build (`.dockerignore`, healthcheck, build-time
+API URL) and the [frontend image size](#frontend-docker-image-was-119gb--fixed), now 210MB.
+
+**Still open:** the [ML upgrade](#next-the-ml-upgrade--open).
 
 Three limitations were accepted rather than fixed, and are documented in the README:
 
@@ -279,35 +281,36 @@ Steps 1–3 got it working. Steps 4–6 made it something you'd want reviewed in
 
 ---
 
-## Open: frontend Docker image is 1.19GB ⬜ OPEN
+## Frontend Docker image was 1.19GB ✅ FIXED
 
-The backend image is 268MB. The frontend is **1.19GB** — four and a half times larger, for an app
+The backend image is 268MB. The frontend was **1.19GB** — four and a half times larger, for an app
 that builds to 91.6kB of JavaScript.
 
-`frontend/Dockerfile` is a single stage. It installs the full dependency tree, builds, and then keeps
-everything: `node_modules` with all 423 packages including devDependencies, the TypeScript compiler,
-ESLint, the Tailwind toolchain, and the complete `.next` build cache. `npm start` needs almost none
-of it.
+`frontend/Dockerfile` was a single stage: it installed the full dependency tree, built, and kept
+everything — `node_modules` with all 423 packages including devDependencies, the TypeScript
+compiler, ESLint, the Tailwind toolchain, and the complete `.next` build cache. `npm start` needed
+almost none of it.
 
-**Fix:** multi-stage build on Next's `standalone` output, which traces the server's actual imports
-and copies only those.
+**Fixed** with a multi-stage build on Next's `standalone` output, which traces the server's actual
+imports and copies only those:
 
-1. `next.config.js` — add `output: 'standalone'`.
-2. **deps stage** — `npm ci`.
-3. **builder stage** — copy `node_modules`, copy source, `npm run build` (keep the
-   `NEXT_PUBLIC_API_BASE_URL` build arg; it still has to be present before the build).
-4. **runner stage** — `FROM node:18-alpine`, copy only `.next/standalone`, `.next/static` and
-   `public/`. Run as a non-root user. `CMD ["node", "server.js"]` — not `npm start`, which the
-   standalone output does not need.
+1. `next.config.js` — `output: 'standalone'`.
+2. **deps stage** — `npm ci` from the lockfile.
+3. **builder stage** — build, keeping the `NEXT_PUBLIC_API_BASE_URL` build arg, which still has to be
+   present before `npm run build`.
+4. **runner stage** — copy only `.next/standalone` and `.next/static`, run as a non-root user,
+   `CMD ["node", "server.js"]` rather than `npm start`, which the standalone output does not need.
 
-Expect roughly **200MB**, so about 6× smaller, with a faster cold start and a much smaller
-vulnerability surface — most of what `npm audit` finds in this image is in build tooling that has no
-business shipping to production.
+**1.19GB → 210MB, 5.7× smaller** — now smaller than the backend image. `node_modules` went from 423
+packages to 15 traced directories; the final image holds only `server.js`, `package.json` and
+`node_modules`. Runs as `uid=1001(nextjs)` instead of root.
 
-Worth doing before deploying to Render or Vercel: image size is pull time on every deploy, and free
-tiers are slow to pull.
+Verified running: backend healthy, 2 battles detected, frontend HTTP 200 rendering the dashboard,
+static chunks served (they sit outside `standalone/` and are the usual thing to get wrong here), and
+the API URL still inlined in the bundle.
 
-Not urgent for local development — `docker compose up --build` works correctly today.
+There is no `public/` directory in this project, so the `COPY` for it that appears in most Next
+Dockerfile templates is deliberately absent — including it fails the build.
 
 ---
 
