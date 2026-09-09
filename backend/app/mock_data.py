@@ -49,6 +49,7 @@ class MockDataGenerator:
     
     def __init__(self):
         self.tick = 0
+        self.started_at = datetime.now()
         self.base_gaps = self._initialize_gaps()
     
     def _initialize_gaps(self):
@@ -84,11 +85,13 @@ class MockDataGenerator:
         now = datetime.now()
 
         # Gaps advance only when /intervals would have refreshed, and carry the
-        # timestamp of that refresh rather than of this poll.
-        interval_tick = self.tick // TICKS_PER_INTERVAL_REFRESH
-        ticks_since_refresh = self.tick % TICKS_PER_INTERVAL_REFRESH
-        gap_updated_at = now - timedelta(
-            seconds=ticks_since_refresh * config.POLL_POSITIONS_INTERVAL_S
+        # timestamp of that refresh rather than of this poll. Derived from a
+        # fixed anchor, not from `now`: a real interval row repeats byte for byte
+        # across polls, so drift in the poll loop must not make it look fresh.
+        # tick is 1-based, so shift before grouping to get whole groups of three
+        interval_tick = (self.tick - 1) // TICKS_PER_INTERVAL_REFRESH
+        gap_updated_at = self.started_at + timedelta(
+            seconds=interval_tick * TICKS_PER_INTERVAL_REFRESH * config.POLL_POSITIONS_INTERVAL_S
         )
 
         lap_number = self.current_lap()
@@ -183,6 +186,7 @@ class MockDataGenerator:
     def reset(self):
         """Reset the mock data generator."""
         self.tick = 0
+        self.started_at = datetime.now()
         self.base_gaps = self._initialize_gaps()
 
 

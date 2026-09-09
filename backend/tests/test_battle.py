@@ -5,12 +5,11 @@ import pytest
 from datetime import datetime, timedelta
 
 from app.battle import (
+    BattleDetector,
     calculate_battle_score,
     calculate_closing_rate,
     calculate_pace_delta,
-    detect_battles,
     detect_pit_window,
-    reset_battle_tracker,
 )
 from app.config import config
 from app.models import BattleFlags, DriverState
@@ -47,12 +46,10 @@ def make_state(
     )
 
 
-@pytest.fixture(autouse=True)
-def clean_tracker():
-    """The stability filter is module-global; isolate each test from the last."""
-    reset_battle_tracker()
-    yield
-    reset_battle_tracker()
+@pytest.fixture
+def detector():
+    """A detector per test - no shared state to reset between them."""
+    return BattleDetector()
 
 
 # --------------------------------------------------------------------------
@@ -243,65 +240,201 @@ def build_battle_scenario():
     return states, histories
 
 
-def test_close_gap_with_closing_rate_is_detected_as_watch():
+def poll(sample: int):
+    """
+    States as of gap reading number `sample` (0-based).
+
+    Each reading is 4s apart - the real /intervals refresh rate - with the gap
+    closing 0.01s per reading.
+    """
+    leader_history, chaser_history = [], []
+    for i in range(sample + 1):
+        at = 4.0 * i
+        leader_history.append(
+            make_state(driver_number=1, position=1, offset_s=at,
+                       gap_offset_s=at, last_lap_time_s=90.5)
+        )
+        chaser_history.append(
+            make_state(driver_number=44, position=2, gap_to_ahead_s=0.35 - 0.01 * i,
+                       offset_s=at, gap_offset_s=at, last_lap_time_s=90.0)
+        )
+
+    states = [leader_history[-1], chaser_history[-1]]
+    histories = {1: leader_history, 44: chaser_history}
+    return states, histories
+
+
+def mature(detector, track_status=None):
+    """Feed enough distinct gap readings for a battle to clear the filter."""
+    battles = []
+    for sample in range(config.BATTLE_MIN_DURATION_UPDATES):
+        battles = detector.detect(*poll(sample), track_status=track_status)
+    return battles
+
+
+def test_close_gap_with_closing_rate_is_detected_as_watch(detector):
     """
     The regression this suite exists for: a 0.3s gap with a closing rate and a
     pace advantage must classify as WATCH, not NONE.
     """
-    states, histories = build_battle_scenario()
-
-    # The stability filter withholds a battle until it has persisted
-    for _ in range(config.BATTLE_MIN_DURATION_UPDATES - 1):
-        assert detect_battles(states, histories) == []
-
-    battles = detect_battles(states, histories)
+    battles = mature(detector)
 
     assert len(battles) == 1
     battle = battles[0]
     assert battle.battle_id == "44_1"
     assert battle.intensity in ("WATCH", "HOT")
     assert battle.battle_score >= config.BATTLE_WATCH_SCORE
-    assert battle.closing_rate_s_per_s == pytest.approx(-0.0125)
+    assert battle.closing_rate_s_per_s == pytest.approx(-0.0025)
     assert battle.pace_delta_s_per_lap == pytest.approx(-0.5)
 
 
-def test_no_battle_without_gap_data():
+def test_no_battle_without_gap_data(detector):
     """
     Guards the /position-vs-/intervals bug: if gaps never arrive, detection is
     silently dead. Any state carrying gap_to_ahead_s of None yields no battles.
     """
-    states, histories = build_battle_scenario()
-    for history in histories.values():
-        for state in history:
+    for sample in range(config.BATTLE_MIN_DURATION_UPDATES + 1):
+        states, histories = poll(sample)
+        for history in histories.values():
+            for state in history:
+                state.gap_to_ahead_s = None
+        for state in states:
             state.gap_to_ahead_s = None
+
+        assert detector.detect(states, histories) == []
+
+
+def test_yellow_flag_suppresses_battle(detector):
+    """The same scenario under a safety car is halved out of contention."""
+    assert mature(detector, track_status="sc") == []
+
+
+# --------------------------------------------------------------------------
+# Stability filter
+# --------------------------------------------------------------------------
+
+def test_battle_stability_filter(detector):
+    """Test that new battles don't appear immediately."""
+    seen = [
+        len(detector.detect(*poll(sample)))
+        for sample in range(config.BATTLE_MIN_DURATION_UPDATES)
+    ]
+
+    assert seen[:-1] == [0] * (config.BATTLE_MIN_DURATION_UPDATES - 1)
+    assert seen[-1] == 1
+
+
+def test_stability_filter_counts_gap_readings_not_polls(detector):
+    """
+    Gaps come from /intervals, which refreshes slower than the poll loop. Polling
+    the same reading over and over must not mature a battle - otherwise the
+    filter certifies a battle it has only ever seen once.
+    """
+    states, histories = poll(0)
+
+    for _ in range(config.BATTLE_MIN_DURATION_UPDATES * 5):
+        assert detector.detect(states, histories) == []
+
+    assert detector.tracked_count == 1
+    assert detector._tracked["44_1"].distinct_samples == 1
+
+
+def test_duration_updates_reports_distinct_readings(detector):
+    """duration_updates is the count of genuine readings the battle survived."""
+    battles = mature(detector)
+
+    assert battles[0].duration_updates == config.BATTLE_MIN_DURATION_UPDATES
+
+
+# --------------------------------------------------------------------------
+# Eviction
+# --------------------------------------------------------------------------
+
+def test_long_running_battle_is_not_evicted(detector):
+    """
+    Eviction keys off last_seen, not first_seen. A battle that has been running
+    for an hour is the most interesting thing on track; dropping it resets its
+    duration and flickers it out of the UI for several polls.
+    """
+    mature(detector)
+
+    # Pretend this battle started long before the eviction window
+    tracked = detector._tracked["44_1"]
+    tracked.first_seen -= timedelta(seconds=config.BATTLE_EVICTION_S * 10)
+
+    battles = detector.detect(*poll(config.BATTLE_MIN_DURATION_UPDATES))
+
+    assert len(battles) == 1
+    assert battles[0].duration_updates == config.BATTLE_MIN_DURATION_UPDATES + 1
+    assert detector.tracked_count == 1
+
+
+def test_battle_evicted_after_absence(detector):
+    """A battle that stops being detected is dropped once it goes stale."""
+    mature(detector)
+    detector._tracked["44_1"].last_seen -= timedelta(
+        seconds=config.BATTLE_EVICTION_S + 1
+    )
+
+    # A poll where the pair is no longer close enough to register
+    states, histories = poll(config.BATTLE_MIN_DURATION_UPDATES)
     for state in states:
         state.gap_to_ahead_s = None
 
-    for _ in range(config.BATTLE_MIN_DURATION_UPDATES + 1):
-        assert detect_battles(states, histories) == []
+    assert detector.detect(states, histories) == []
+    assert detector.tracked_count == 0
 
 
-def test_yellow_flag_suppresses_battle():
-    """The same scenario under a safety car is halved out of contention."""
-    states, histories = build_battle_scenario()
+# --------------------------------------------------------------------------
+# Result cache
+# --------------------------------------------------------------------------
 
-    for _ in range(config.BATTLE_MIN_DURATION_UPDATES + 1):
-        battles = detect_battles(states, histories, track_status="sc")
+def test_cache_holds_last_result_without_rerunning_detection(detector):
+    """
+    /battles/top reads this cache. Reading it must not advance the stability
+    filter - that was the bug where two open browser tabs matured battles twice
+    as fast and zero clients matured them never.
+    """
+    mature(detector)
+    tracked_before = detector._tracked["44_1"].distinct_samples
 
-    assert battles == []
+    for _ in range(10):
+        assert len(detector.latest_battles) == 1
+
+    assert detector._tracked["44_1"].distinct_samples == tracked_before
 
 
-def test_battle_stability_filter():
-    """Test that new battles don't appear immediately."""
-    states, histories = build_battle_scenario()
+def test_cache_is_empty_before_first_detection(detector):
+    assert detector.latest_battles == []
+    assert detector.detected_at is None
 
-    seen_counts = [
-        len(detect_battles(states, histories))
-        for _ in range(config.BATTLE_MIN_DURATION_UPDATES)
-    ]
 
-    assert seen_counts[:-1] == [0] * (config.BATTLE_MIN_DURATION_UPDATES - 1)
-    assert seen_counts[-1] == 1
+def test_detected_at_advances_with_each_run(detector):
+    detector.detect(*poll(0))
+    first = detector.detected_at
+    detector.detect(*poll(1))
+
+    assert first is not None
+    assert detector.detected_at >= first
+
+
+def test_latest_battles_is_a_copy(detector):
+    """Callers mutating the returned list must not corrupt the cache."""
+    mature(detector)
+
+    detector.latest_battles.clear()
+
+    assert len(detector.latest_battles) == 1
+
+
+def test_reset_clears_tracker_and_cache(detector):
+    mature(detector)
+
+    detector.reset()
+
+    assert detector.latest_battles == []
+    assert detector.detected_at is None
+    assert detector.tracked_count == 0
 
 
 # --------------------------------------------------------------------------

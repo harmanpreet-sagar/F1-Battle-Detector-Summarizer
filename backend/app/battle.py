@@ -2,6 +2,7 @@
 Battle detection and scoring algorithm.
 """
 from typing import List, Optional, Dict
+from dataclasses import dataclass
 from datetime import datetime
 import logging
 
@@ -11,14 +12,16 @@ from app.config import config
 logger = logging.getLogger(__name__)
 
 
-# Global battle tracker for stability filter
-# Maps battle_id -> (Battle object, first_seen_timestamp)
-_battle_tracker: Dict[str, tuple[Battle, datetime]] = {}
-
-
-def reset_battle_tracker():
-    """Drop all tracked battles (session change, or test isolation)."""
-    _battle_tracker.clear()
+@dataclass
+class TrackedBattle:
+    """A battle the stability filter is holding across polls."""
+    battle: Battle
+    first_seen: datetime
+    last_seen: datetime
+    # Gap sample the last distinct reading came from. Gaps refresh slower than
+    # the poll loop, so several polls can carry the same reading.
+    last_gap_sample: Optional[datetime]
+    distinct_samples: int
 
 
 def calculate_battle_score(
@@ -147,175 +150,255 @@ def calculate_pace_delta(
     return (sum(chaser_times) / len(chaser_times)) - (sum(ahead_times) / len(ahead_times))
 
 
-def detect_battles(
-    driver_states: List[DriverState],
-    driver_histories: Dict[int, List[DriverState]],
-    track_status: Optional[str] = None
-) -> List[Battle]:
+class BattleDetector:
     """
-    Detect battles between adjacent drivers.
-    
-    Args:
-        driver_states: Current state of all drivers
-        driver_histories: Historical states for calculating trends
-        track_status: Current track status (green, yellow, sc, vsc, etc.)
-    
-    Returns:
-        List of Battle objects sorted by score (highest first).
-    """
-    global _battle_tracker
-    
-    if not driver_states:
-        logger.warning("detect_battles: No driver states provided")
-        return []
-    
-    logger.debug(f"detect_battles: Processing {len(driver_states)} drivers")
-    
-    # 1. Sort drivers by position
-    sorted_drivers = sorted(driver_states, key=lambda d: d.position)
-    
-    battles = []
-    current_time = datetime.now()
-    
-    # 2. Check adjacent pairs (P2 chasing P1, P3 chasing P2, etc.)
-    for i in range(len(sorted_drivers) - 1):
-        chaser = sorted_drivers[i + 1]
-        ahead = sorted_drivers[i]
-        
-        # Skip if positions don't match expected pattern
-        if ahead.position >= chaser.position:
-            logger.debug(f"Skipping pair: positions don't match (ahead P{ahead.position} >= chaser P{chaser.position})")
-            continue
-        
-        # Get gap
-        gap = chaser.gap_to_ahead_s
-        if gap is None:
-            logger.debug(f"Skipping P{chaser.position} vs P{ahead.position}: gap is None")
-            continue
-        if gap <= 0:
-            logger.debug(f"Skipping P{chaser.position} vs P{ahead.position}: gap <= 0 ({gap})")
-            continue
-        if gap > config.BATTLE_MAX_GAP_S:
-            logger.debug(f"Skipping P{chaser.position} vs P{ahead.position}: gap too large ({gap:.2f}s > {config.BATTLE_MAX_GAP_S}s)")
-            continue
-        
-        logger.debug(f"Checking battle: P{chaser.position} ({chaser.full_name}) vs P{ahead.position} ({ahead.full_name}), gap={gap:.2f}s")
-        
-        # Calculate closing rate from history
-        chaser_history = driver_histories.get(chaser.driver_number, [])
-        ahead_history = driver_histories.get(ahead.driver_number, [])
-        closing_rate = calculate_closing_rate(chaser_history)
+    Detects battles and owns the state that survives between polls.
 
-        # Pace delta from lap times (negative = chaser is the faster car)
-        pace_delta = calculate_pace_delta(chaser_history, ahead_history)
-        
-        # 3. Determine battle flags
-        flags = BattleFlags(
-            pit_window_active=detect_pit_window(chaser_history),
-            under_yellow=(track_status in ["yellow", "sc", "vsc"]) if track_status else False,
-            blue_flag_situation=abs(ahead.position - chaser.position) > 5,  # Lapping situation
-            data_quality_warning=(
-                chaser.data_confidence != "high" or 
-                ahead.data_confidence != "high"
+    Detection runs once per data poll, not once per HTTP request: the stability
+    filter and the eviction clock only mean anything if they advance with
+    incoming data rather than with client traffic.
+    """
+
+    def __init__(self):
+        self._tracked: Dict[str, TrackedBattle] = {}
+        self._latest: List[Battle] = []
+        self._detected_at: Optional[datetime] = None
+
+    @property
+    def latest_battles(self) -> List[Battle]:
+        """Battles from the most recent poll. Read-only view for endpoints."""
+        return list(self._latest)
+
+    @property
+    def detected_at(self) -> Optional[datetime]:
+        """When detection last ran, or None if it never has."""
+        return self._detected_at
+
+    @property
+    def tracked_count(self) -> int:
+        """Battles being held by the stability filter, shown or not."""
+        return len(self._tracked)
+
+    def reset(self):
+        """Drop all tracked and cached battles (session change, or test setup)."""
+        self._tracked.clear()
+        self._latest = []
+        self._detected_at = None
+
+    def detect(
+        self,
+        driver_states: List[DriverState],
+        driver_histories: Dict[int, List[DriverState]],
+        track_status: Optional[str] = None
+    ) -> List[Battle]:
+        """
+        Detect battles between adjacent drivers and cache the result.
+
+        Args:
+            driver_states: Current state of all drivers
+            driver_histories: Historical states for calculating trends
+            track_status: Current track status (green, yellow, sc, vsc, etc.)
+
+        Returns:
+            List of Battle objects sorted by score (highest first).
+        """
+        battles = self._detect(driver_states, driver_histories, track_status)
+        self._latest = battles
+        self._detected_at = datetime.now()
+        return list(battles)
+
+    def _detect(
+        self,
+        driver_states: List[DriverState],
+        driver_histories: Dict[int, List[DriverState]],
+        track_status: Optional[str]
+    ) -> List[Battle]:
+        if not driver_states:
+            logger.warning("detect: No driver states provided")
+            return []
+
+        logger.debug(f"detect: Processing {len(driver_states)} drivers")
+
+        # 1. Sort drivers by position
+        sorted_drivers = sorted(driver_states, key=lambda d: d.position)
+
+        battles = []
+        current_time = datetime.now()
+
+        # 2. Check adjacent pairs (P2 chasing P1, P3 chasing P2, etc.)
+        for i in range(len(sorted_drivers) - 1):
+            chaser = sorted_drivers[i + 1]
+            ahead = sorted_drivers[i]
+
+            # Skip if positions don't match expected pattern
+            if ahead.position >= chaser.position:
+                logger.debug(f"Skipping pair: positions don't match (ahead P{ahead.position} >= chaser P{chaser.position})")
+                continue
+
+            # Get gap
+            gap = chaser.gap_to_ahead_s
+            if gap is None:
+                logger.debug(f"Skipping P{chaser.position} vs P{ahead.position}: gap is None")
+                continue
+            if gap <= 0:
+                logger.debug(f"Skipping P{chaser.position} vs P{ahead.position}: gap <= 0 ({gap})")
+                continue
+            if gap > config.BATTLE_MAX_GAP_S:
+                logger.debug(f"Skipping P{chaser.position} vs P{ahead.position}: gap too large ({gap:.2f}s > {config.BATTLE_MAX_GAP_S}s)")
+                continue
+
+            logger.debug(f"Checking battle: P{chaser.position} ({chaser.full_name}) vs P{ahead.position} ({ahead.full_name}), gap={gap:.2f}s")
+
+            # Calculate closing rate from history
+            chaser_history = driver_histories.get(chaser.driver_number, [])
+            ahead_history = driver_histories.get(ahead.driver_number, [])
+            closing_rate = calculate_closing_rate(chaser_history)
+
+            # Pace delta from lap times (negative = chaser is the faster car)
+            pace_delta = calculate_pace_delta(chaser_history, ahead_history)
+
+            # 3. Determine battle flags
+            flags = BattleFlags(
+                pit_window_active=detect_pit_window(chaser_history),
+                under_yellow=(track_status in ["yellow", "sc", "vsc"]) if track_status else False,
+                blue_flag_situation=abs(ahead.position - chaser.position) > 5,  # Lapping situation
+                data_quality_warning=(
+                    chaser.data_confidence != "high" or
+                    ahead.data_confidence != "high"
+                )
             )
-        )
-        
-        # 4. Calculate battle score
-        score = calculate_battle_score(gap, closing_rate, pace_delta, flags)
-        
-        # Determine intensity
-        if score > config.BATTLE_HOT_SCORE and gap < config.BATTLE_HOT_GAP_S and closing_rate and closing_rate < 0:
-            intensity = "HOT"
-        elif score > config.BATTLE_WATCH_SCORE and gap < config.BATTLE_WATCH_GAP_S:
-            intensity = "WATCH"
-        else:
-            intensity = "NONE"
-        
-        logger.debug(
-            f"  Battle P{chaser.position} vs P{ahead.position}: "
-            f"gap={gap:.2f}s, closing_rate={closing_rate}, score={score:.3f}, intensity={intensity}"
-        )
-        
-        # Skip if not interesting
-        if intensity == "NONE":
-            continue
-        
-        # Create battle ID
-        battle_id = f"{chaser.driver_number}_{ahead.driver_number}"
-        
-        # Get gap trend from history
-        trend_gaps = [
-            s.gap_to_ahead_s for s in chaser_history[-config.BATTLE_GAP_TREND_WINDOW:]
-            if s.gap_to_ahead_s is not None
-        ]
-        trend_timestamps = [
-            s.updated_at for s in chaser_history[-config.BATTLE_GAP_TREND_WINDOW:]
-            if s.gap_to_ahead_s is not None
-        ]
-        
-        # Generate explanation
-        explanation_parts = []
-        if closing_rate and closing_rate < 0:
-            # Realistic rates are hundredths of a second per second; report the
-            # gap eaten per minute, which is legible at that scale.
-            explanation_parts.append(f"Closing {abs(closing_rate) * 60:.2f}s/min")
-        if pace_delta is not None and pace_delta < 0:
-            explanation_parts.append(f"{abs(pace_delta):.2f}s/lap quicker")
-        if gap < 1.0:
-            explanation_parts.append("Within DRS range")
-        if flags.pit_window_active:
-            explanation_parts.append("Pit window active")
-        if not explanation_parts:
-            explanation_parts.append(f"Gap: {gap:.2f}s")
-        
-        explanation = " • ".join(explanation_parts)
-        
-        # Create battle object
-        battle = Battle(
-            battle_id=battle_id,
-            chaser_driver_number=chaser.driver_number,
-            ahead_driver_number=ahead.driver_number,
-            chaser_position=chaser.position,
-            ahead_position=ahead.position,
-            gap_now_s=gap,
-            closing_rate_s_per_s=closing_rate,
-            pace_delta_s_per_lap=pace_delta,
-            battle_score=score,
-            intensity=intensity,
-            explanation=explanation,
-            trend_gap_s=trend_gaps,
-            trend_timestamps=trend_timestamps,
-            duration_updates=1,  # Will be updated below
-            flags=flags
-        )
-        
-        # 5. Apply stability filter
-        if battle_id in _battle_tracker:
-            # Existing battle - increment duration
-            prev_battle, first_seen = _battle_tracker[battle_id]
-            battle.duration_updates = prev_battle.duration_updates + 1
-            _battle_tracker[battle_id] = (battle, first_seen)
-            
-            # Only show if it's been around for minimum duration
-            if battle.duration_updates >= config.BATTLE_MIN_DURATION_UPDATES:
+
+            # 4. Calculate battle score
+            score = calculate_battle_score(gap, closing_rate, pace_delta, flags)
+
+            # Determine intensity
+            if score > config.BATTLE_HOT_SCORE and gap < config.BATTLE_HOT_GAP_S and closing_rate and closing_rate < 0:
+                intensity = "HOT"
+            elif score > config.BATTLE_WATCH_SCORE and gap < config.BATTLE_WATCH_GAP_S:
+                intensity = "WATCH"
+            else:
+                intensity = "NONE"
+
+            logger.debug(
+                f"  Battle P{chaser.position} vs P{ahead.position}: "
+                f"gap={gap:.2f}s, closing_rate={closing_rate}, score={score:.3f}, intensity={intensity}"
+            )
+
+            # Skip if not interesting
+            if intensity == "NONE":
+                continue
+
+            # Create battle ID
+            battle_id = f"{chaser.driver_number}_{ahead.driver_number}"
+
+            # Get gap trend from history
+            trend_gaps = [
+                s.gap_to_ahead_s for s in chaser_history[-config.BATTLE_GAP_TREND_WINDOW:]
+                if s.gap_to_ahead_s is not None
+            ]
+            trend_timestamps = [
+                s.updated_at for s in chaser_history[-config.BATTLE_GAP_TREND_WINDOW:]
+                if s.gap_to_ahead_s is not None
+            ]
+
+            # Generate explanation
+            explanation_parts = []
+            if closing_rate and closing_rate < 0:
+                # Realistic rates are hundredths of a second per second; report the
+                # gap eaten per minute, which is legible at that scale.
+                explanation_parts.append(f"Closing {abs(closing_rate) * 60:.2f}s/min")
+            if pace_delta is not None and pace_delta < 0:
+                explanation_parts.append(f"{abs(pace_delta):.2f}s/lap quicker")
+            if gap < 1.0:
+                explanation_parts.append("Within DRS range")
+            if flags.pit_window_active:
+                explanation_parts.append("Pit window active")
+            if not explanation_parts:
+                explanation_parts.append(f"Gap: {gap:.2f}s")
+
+            explanation = " • ".join(explanation_parts)
+
+            # Create battle object
+            battle = Battle(
+                battle_id=battle_id,
+                chaser_driver_number=chaser.driver_number,
+                ahead_driver_number=ahead.driver_number,
+                chaser_position=chaser.position,
+                ahead_position=ahead.position,
+                gap_now_s=gap,
+                closing_rate_s_per_s=closing_rate,
+                pace_delta_s_per_lap=pace_delta,
+                battle_score=score,
+                intensity=intensity,
+                explanation=explanation,
+                trend_gap_s=trend_gaps,
+                trend_timestamps=trend_timestamps,
+                duration_updates=1,  # Replaced by the stability filter below
+                flags=flags
+            )
+
+            # 5. Apply stability filter
+            if self._track(battle, _gap_sample_time(chaser), current_time):
                 battles.append(battle)
-        else:
-            # New battle - track it but don't show yet
-            _battle_tracker[battle_id] = (battle, current_time)
-            # Skip adding to battles list until it persists
-    
-    # Clean up old battles (not seen in last 30 seconds)
-    cutoff_time = current_time.timestamp() - 30
-    _battle_tracker = {
-        bid: (b, t) for bid, (b, t) in _battle_tracker.items()
-        if t.timestamp() > cutoff_time
-    }
-    
-    # Sort by score
-    battles.sort(key=lambda b: b.battle_score, reverse=True)
-    
-    logger.debug(f"Detected {len(battles)} battles (tracked {len(_battle_tracker)} total)")
-    return battles
+
+        self._evict(current_time)
+
+        # Sort by score
+        battles.sort(key=lambda b: b.battle_score, reverse=True)
+
+        logger.debug(f"Detected {len(battles)} battles (tracked {len(self._tracked)} total)")
+        return battles
+
+    def _track(self, battle: Battle, gap_sample: datetime, current_time: datetime) -> bool:
+        """
+        Record this sighting and report whether the battle is mature enough to show.
+
+        Maturity counts *distinct gap readings*, not polls. Gaps come from
+        /intervals, which refreshes slower than the poll loop, so counting polls
+        would let a battle mature on a single reading served three times over.
+        """
+        tracked = self._tracked.get(battle.battle_id)
+
+        if tracked is None:
+            # New battle - track it, but don't show it until it persists
+            self._tracked[battle.battle_id] = TrackedBattle(
+                battle=battle,
+                first_seen=current_time,
+                last_seen=current_time,
+                last_gap_sample=gap_sample,
+                distinct_samples=1,
+            )
+            battle.duration_updates = 1
+            return False
+
+        if gap_sample != tracked.last_gap_sample:
+            tracked.distinct_samples += 1
+            tracked.last_gap_sample = gap_sample
+
+        tracked.battle = battle
+        tracked.last_seen = current_time
+        battle.duration_updates = tracked.distinct_samples
+
+        return tracked.distinct_samples >= config.BATTLE_MIN_DURATION_UPDATES
+
+    def _evict(self, current_time: datetime):
+        """
+        Drop battles that have not been seen recently.
+
+        Eviction keys off last_seen, not first_seen: a battle that has been
+        running for an hour is the most interesting thing on track, and must not
+        be dropped for the crime of lasting.
+        """
+        cutoff = current_time.timestamp() - config.BATTLE_EVICTION_S
+        self._tracked = {
+            battle_id: tracked
+            for battle_id, tracked in self._tracked.items()
+            if tracked.last_seen.timestamp() > cutoff
+        }
+
+
+# Global detector instance - fed by the position poll loop
+battle_detector = BattleDetector()
 
 
 def detect_pit_window(driver_history: List[DriverState]) -> bool:

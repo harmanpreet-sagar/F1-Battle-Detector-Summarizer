@@ -12,7 +12,7 @@ from app.health import get_health_status, health_manager
 from app.openf1_client import openf1_client, OpenF1APIError
 from app.session import session_manager
 from app.state import state_manager
-from app.battle import detect_battles
+from app.battle import battle_detector
 from app.mock_data import mock_data_generator
 
 # Configure logging
@@ -60,6 +60,30 @@ async def poll_session_status():
             await asyncio.sleep(retry_delay)
 
 
+def run_detection():
+    """
+    Run battle detection over current state and cache the result.
+
+    Called once per data poll. Detection used to run inside GET /battles/top,
+    which meant the stability filter counted HTTP requests: two open tabs
+    matured battles twice as fast and zero clients matured them never.
+    """
+    driver_states = state_manager.get_all_current_states()
+    if not driver_states:
+        return
+
+    driver_histories = {
+        driver.driver_number: state_manager.get_history(driver.driver_number)
+        for driver in driver_states
+    }
+
+    session = session_manager.get_current_session()
+    track_status = session.track_status if session else None
+
+    battles = battle_detector.detect(driver_states, driver_histories, track_status)
+    logger.debug(f"Detection: {len(battles)} battles shown, {battle_detector.tracked_count} tracked")
+
+
 async def poll_positions():
     """Background task to poll position data and update driver states."""
     retry_delay = 1.0
@@ -82,9 +106,10 @@ async def poll_positions():
                     state_manager.update_driver_state(state)
                 
                 state_manager.detect_pit_windows()
+                run_detection()
                 health_manager.record_successful_position_poll()
                 health_manager.active_session = True
-                
+
                 await asyncio.sleep(config.POLL_POSITIONS_INTERVAL_S)
                 continue
             
@@ -122,6 +147,7 @@ async def poll_positions():
                     positions, drivers_info, intervals=intervals, laps=cached_laps
                 )
                 state_manager.detect_pit_windows()
+                run_detection()
                 health_manager.record_successful_position_poll()
                 logger.debug(
                     f"Updated positions for {len(positions)} drivers "
@@ -246,31 +272,25 @@ async def get_latest_state():
 
 @app.get("/battles/top")
 async def get_top_battles(k: int = 5, min_intensity: str = "WATCH"):
-    """Get top K battles filtered by minimum intensity."""
-    # Get current driver states
+    """
+    Get top K battles filtered by minimum intensity.
+
+    A pure read of the last detection run. Detection happens in the poll loop,
+    so the result does not depend on who is asking or how often.
+    """
     driver_states = state_manager.get_all_current_states()
-    
-    if not driver_states:
+
+    if battle_detector.detected_at is None:
         return {
             "battles": [],
             "count": 0,
             "message": "No driver data available. Waiting for active session with position data.",
-            "updated_at": None
+            "updated_at": None,
+            "detected_at": None
         }
-    
-    # Get driver histories for trend calculations
-    driver_histories = {
-        driver.driver_number: state_manager.get_history(driver.driver_number)
-        for driver in driver_states
-    }
-    
-    # Get track status from session
-    session = session_manager.get_current_session()
-    track_status = session.track_status if session else None
-    
-    # Detect battles
-    all_battles = detect_battles(driver_states, driver_histories, track_status)
-    
+
+    all_battles = battle_detector.latest_battles
+
     # Filter by minimum intensity
     intensity_order = {"HOT": 2, "WATCH": 1, "NONE": 0}
     min_intensity_value = intensity_order.get(min_intensity.upper(), 1)
@@ -306,7 +326,10 @@ async def get_top_battles(k: int = 5, min_intensity: str = "WATCH"):
         "battles": enriched_battles,
         "count": len(top_battles),
         "total_detected": len(all_battles),
-        "updated_at": driver_states[0].updated_at.isoformat() if driver_states else None
+        # Freshness of the underlying F1 data, which is what the client shows as
+        # its connection status; detected_at is when this result was computed.
+        "updated_at": driver_states[0].updated_at.isoformat() if driver_states else None,
+        "detected_at": battle_detector.detected_at.isoformat()
     }
 
 
