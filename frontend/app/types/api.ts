@@ -28,7 +28,6 @@ export interface Battle {
 export interface BattleFlags {
   pit_window_active: boolean
   under_yellow: boolean
-  blue_flag_situation: boolean
   data_quality_warning: boolean
 }
 

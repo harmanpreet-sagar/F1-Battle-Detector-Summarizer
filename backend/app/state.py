@@ -41,7 +41,7 @@ class StateManager:
     def __init__(self):
         self.current_state: Dict[int, DriverState] = {}
         self.history: Dict[int, deque] = {}
-        self.max_history_length = config.BATTLE_GAP_TREND_WINDOW
+        self.max_history_length = config.HISTORY_MAX_LEN
     
     def update_driver_state(self, driver_state: DriverState):
         """Update state for a single driver."""
@@ -175,30 +175,6 @@ class StateManager:
             return None, None, None
 
         return previous.gap_to_ahead_s, previous.gap_to_leader_s, previous.gap_updated_at
-    
-    def detect_pit_windows(self):
-        """
-        Detect sudden gap changes indicating pit stops.
-        Sets a flag on driver states that might be in pit window.
-        """
-        for driver_num, history in self.history.items():
-            if len(history) < 2:
-                continue
-            
-            # Check last two states for sudden gap change
-            prev_state = history[-2]
-            curr_state = history[-1]
-            
-            # Skip if either gap is None
-            if prev_state.gap_to_ahead_s is None or curr_state.gap_to_ahead_s is None:
-                continue
-            
-            gap_change = abs(curr_state.gap_to_ahead_s - prev_state.gap_to_ahead_s)
-            
-            # If gap changed by > 10s, likely a pit stop
-            if gap_change > 10.0:
-                logger.info(f"Pit window detected for driver {driver_num}: gap changed by {gap_change:.1f}s")
-                # Note: We'll use this information in battle detection
     
     def clear(self):
         """Clear all state (e.g., between sessions)."""

@@ -28,6 +28,19 @@ position_poll_task = None
 session_poll_task = None
 
 
+def reset_for_new_session(session_key):
+    """
+    Drop everything accumulated for the previous session.
+
+    Driver states, gap history and battle IDs are all scoped to one session.
+    Carried across a session change they produce battles between drivers whose
+    gaps were measured in a different race.
+    """
+    logger.info(f"New session {session_key} - clearing driver state and battles")
+    state_manager.clear()
+    battle_detector.reset()
+
+
 async def poll_session_status():
     """Background task to poll for current F1 session."""
     retry_delay = 30.0
@@ -37,13 +50,15 @@ async def poll_session_status():
             # TEST MODE: Use mock session
             if config.TEST_MODE:
                 logger.info("TEST MODE: Using mock session")
-                session_manager.current_session = mock_data_generator.generate_mock_session()
+                if session_manager.set_session(mock_data_generator.generate_mock_session()):
+                    reset_for_new_session(session_manager.current_session.session_key)
                 health_manager.active_session = True
                 await asyncio.sleep(config.POLL_SESSION_INTERVAL_S)
                 continue
             
             # NORMAL MODE: Real OpenF1 session
-            await session_manager.update_current_session()
+            if await session_manager.update_current_session():
+                reset_for_new_session(session_manager.current_session.session_key)
             
             if session_manager.is_session_active():
                 health_manager.active_session = True
@@ -105,7 +120,6 @@ async def poll_positions():
                 for state in mock_states:
                     state_manager.update_driver_state(state)
                 
-                state_manager.detect_pit_windows()
                 run_detection()
                 health_manager.record_successful_position_poll()
                 health_manager.active_session = True
@@ -146,7 +160,6 @@ async def poll_positions():
                 state_manager.update_from_openf1_positions(
                     positions, drivers_info, intervals=intervals, laps=cached_laps
                 )
-                state_manager.detect_pit_windows()
                 run_detection()
                 health_manager.record_successful_position_poll()
                 logger.debug(

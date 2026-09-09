@@ -18,6 +18,12 @@ class Config:
     POLL_LAPS_INTERVAL_S: float = float(os.getenv("POLL_LAPS_INTERVAL_S", "10.0"))
     POLL_SESSION_INTERVAL_S: float = float(os.getenv("POLL_SESSION_INTERVAL_S", "30.0"))
     
+    # How many states to retain per driver. Decoupled from the trend window:
+    # detection reads a short recent slice, but /drivers/{n}/trend and the
+    # sparkline want more history than detection does. 60 is ~90s at a 1.5s
+    # poll, for 20 drivers - trivial memory.
+    HISTORY_MAX_LEN: int = int(os.getenv("HISTORY_MAX_LEN", "60"))
+
     # Battle detection
     BATTLE_GAP_TREND_WINDOW: int = int(os.getenv("BATTLE_GAP_TREND_WINDOW", "6"))
     BATTLE_PACE_TREND_WINDOW: int = int(os.getenv("BATTLE_PACE_TREND_WINDOW", "3"))

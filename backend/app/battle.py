@@ -261,7 +261,6 @@ class BattleDetector:
             flags = BattleFlags(
                 pit_window_active=detect_pit_window(chaser_history),
                 under_yellow=(track_status in ["yellow", "sc", "vsc"]) if track_status else False,
-                blue_flag_situation=abs(ahead.position - chaser.position) > 5,  # Lapping situation
                 data_quality_warning=(
                     chaser.data_confidence != "high" or
                     ahead.data_confidence != "high"

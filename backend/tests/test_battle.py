@@ -4,6 +4,7 @@ Unit tests for battle detection and scoring.
 import pytest
 from datetime import datetime, timedelta
 
+from app.models import BattleFlags
 from app.battle import (
     BattleDetector,
     calculate_battle_score,
@@ -455,3 +456,29 @@ def test_pit_stop_detection():
     assert detect_pit_window(pitted) is True
     assert detect_pit_window(steady) is False
     assert detect_pit_window(steady[:1]) is False
+
+
+# --------------------------------------------------------------------------
+# Flags
+# --------------------------------------------------------------------------
+
+def test_battle_flags_carry_no_unreachable_fields():
+    """
+    blue_flag_situation was computed as abs(ahead.position - chaser.position) > 5
+    over *adjacent* positions, so it was always False. Detection pairs adjacent
+    classified positions, and F1 classification already orders by lap count, so a
+    lapped car is never adjacent to the car lapping it - the flag could not be
+    implemented under this pairing model, and a permanently-false field in the
+    API implies a capability that is not there.
+    """
+    assert "blue_flag_situation" not in BattleFlags.model_fields
+
+
+def test_pit_window_flag_is_still_populated(detector):
+    """Deleting the dead pit-window no-op must not disturb the working one."""
+    states, histories = poll(1)
+    # A 15s gap jump is the pit-stop signature detect_pit_window looks for
+    histories[44][-1].gap_to_ahead_s = 20.0
+    histories[44][-2].gap_to_ahead_s = 0.35
+
+    assert detect_pit_window(histories[44]) is True
