@@ -2,7 +2,18 @@
 Configuration management - loads from environment variables with sensible defaults.
 """
 import os
+from pathlib import Path
 from typing import List
+
+from dotenv import load_dotenv
+
+# Read backend/.env, which is what the README tells you to create. Without this
+# the file is inert outside Docker (compose passes it via env_file), so the app
+# silently runs in live mode with TEST_MODE=true sitting in the file.
+#
+# override=False: a real environment variable always wins, so Docker, CI and a
+# one-off `TEST_MODE=true uvicorn ...` keep behaving as before.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=False)
 
 
 class Config:
