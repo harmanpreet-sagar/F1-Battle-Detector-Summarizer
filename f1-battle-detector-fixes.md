@@ -248,6 +248,38 @@ Steps 1–3 get it working. Steps 4–6 make it something you'd want reviewed in
 
 ---
 
+## Open: frontend Docker image is 1.19GB
+
+The backend image is 268MB. The frontend is **1.19GB** — four and a half times larger, for an app
+that builds to 91.6kB of JavaScript.
+
+`frontend/Dockerfile` is a single stage. It installs the full dependency tree, builds, and then keeps
+everything: `node_modules` with all 423 packages including devDependencies, the TypeScript compiler,
+ESLint, the Tailwind toolchain, and the complete `.next` build cache. `npm start` needs almost none
+of it.
+
+**Fix:** multi-stage build on Next's `standalone` output, which traces the server's actual imports
+and copies only those.
+
+1. `next.config.js` — add `output: 'standalone'`.
+2. **deps stage** — `npm ci`.
+3. **builder stage** — copy `node_modules`, copy source, `npm run build` (keep the
+   `NEXT_PUBLIC_API_BASE_URL` build arg; it still has to be present before the build).
+4. **runner stage** — `FROM node:18-alpine`, copy only `.next/standalone`, `.next/static` and
+   `public/`. Run as a non-root user. `CMD ["node", "server.js"]` — not `npm start`, which the
+   standalone output does not need.
+
+Expect roughly **200MB**, so about 6× smaller, with a faster cold start and a much smaller
+vulnerability surface — most of what `npm audit` finds in this image is in build tooling that has no
+business shipping to production.
+
+Worth doing before deploying to Render or Vercel: image size is pull time on every deploy, and free
+tiers are slow to pull.
+
+Not urgent for local development — `docker compose up --build` works correctly today.
+
+---
+
 ## After it works: the ML upgrade
 
 This is the highest-value item in your entire portfolio, because it converts your weakest track into
