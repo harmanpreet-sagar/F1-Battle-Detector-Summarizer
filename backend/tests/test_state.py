@@ -152,3 +152,30 @@ def test_missing_lap_data_leaves_lap_time_none(manager):
     manager.update_from_openf1_positions(positions, DRIVERS_INFO, laps={})
 
     assert manager.get_current_state(44).last_lap_time_s is None
+
+
+# --------------------------------------------------------------------------
+# Mock generator fidelity
+# --------------------------------------------------------------------------
+
+def test_mock_gaps_repeat_across_polls_like_real_intervals():
+    """
+    A real /intervals row repeats byte for byte until the endpoint refreshes.
+    The mock must do the same, or TEST_MODE never exercises the repeated-sample
+    path and the stability filter looks like it advances once per poll.
+    """
+    from app.mock_data import MockDataGenerator, TICKS_PER_INTERVAL_REFRESH
+
+    generator = MockDataGenerator()
+    samples = []
+    for _ in range(TICKS_PER_INTERVAL_REFRESH * 2):
+        chaser = next(s for s in generator.generate_driver_states() if s.position == 2)
+        samples.append((chaser.gap_updated_at, chaser.gap_to_ahead_s))
+
+    distinct = {stamp for stamp, _ in samples}
+    assert len(distinct) == 2, "expected exactly two interval refreshes over six polls"
+
+    # Within one refresh the gap itself must not move either
+    for stamp in distinct:
+        gaps = {gap for s, gap in samples if s == stamp}
+        assert len(gaps) == 1

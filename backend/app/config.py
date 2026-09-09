@@ -21,8 +21,11 @@ class Config:
     # Battle detection
     BATTLE_GAP_TREND_WINDOW: int = int(os.getenv("BATTLE_GAP_TREND_WINDOW", "6"))
     BATTLE_PACE_TREND_WINDOW: int = int(os.getenv("BATTLE_PACE_TREND_WINDOW", "3"))
+    # Distinct gap readings a battle must survive before it is shown
     BATTLE_MIN_DURATION_UPDATES: int = int(os.getenv("BATTLE_MIN_DURATION_UPDATES", "3"))
     BATTLE_MAX_GAP_S: float = float(os.getenv("BATTLE_MAX_GAP_S", "3.0"))
+    # How long a battle survives without being re-detected before it is dropped
+    BATTLE_EVICTION_S: float = float(os.getenv("BATTLE_EVICTION_S", "30.0"))
     
     # Thresholds
     BATTLE_WATCH_SCORE: float = float(os.getenv("BATTLE_WATCH_SCORE", "0.55"))
