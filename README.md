@@ -5,12 +5,12 @@ Real-time Formula 1 battle detection and tracking system. A live race companion 
 ## Features
 
 - ⚡ Real-time battle detection between adjacent drivers
-- 🎯 Smart scoring algorithm (gap, closing rate, pace advantage)
+- 🎯 Scoring on gap, closing rate and pace advantage, with a stability filter
 - 🚦 Safety car and pit stop awareness
-- 📊 Gap trend visualizations (sparklines)
+- 📊 Gap trend sparklines
 - 📱 Mobile-first responsive design
 - 🔴 Live connection status indicator
-- 🏎️ Driver watchlist (coming soon)
+- 🧪 `TEST_MODE` for developing without a live session
 
 ## Architecture
 
@@ -96,18 +96,21 @@ npm run dev
 
 ```bash
 F1-Battle-Detector-Summarizer/
+├── .github/workflows/ci.yml  # Backend tests, frontend lint and build
 ├── backend/
 │   ├── app/
-│   │   ├── main.py           # FastAPI application
+│   │   ├── main.py           # FastAPI app, polling loops, endpoints
 │   │   ├── openf1_client.py  # OpenF1 API wrapper
 │   │   ├── models.py         # Pydantic data models
 │   │   ├── state.py          # In-memory state manager
-│   │   ├── battle.py         # Battle detection logic
-│   │   ├── session.py        # Session management
+│   │   ├── battle.py         # Battle detection and scoring
+│   │   ├── session.py        # Session lifecycle
 │   │   ├── health.py         # Health monitoring
+│   │   ├── mock_data.py      # TEST_MODE data generator
 │   │   └── config.py         # Configuration
 │   ├── tests/                # Unit and integration tests
 │   ├── requirements.txt
+│   ├── requirements-dev.txt
 │   └── Dockerfile
 ├── frontend/
 │   ├── app/
@@ -133,7 +136,7 @@ F1-Battle-Detector-Summarizer/
 
 - `GET /state/latest` - All 20 drivers' current state
 - `GET /battles/top?k=5` - Top K battles ranked by score
-- `GET /drivers/{driver_number}/trend` - Gap trend for specific driver
+- `GET /drivers/{driver_number}/trend?points=10` - Gap trend for a driver
 
 ### System
 
@@ -150,10 +153,17 @@ pytest tests/ -v
 
 **Frontend:**
 
+There are no frontend tests yet. `npm run lint` and `npm run build` are what CI
+runs, and the build type-checks the whole app:
+
 ```bash
 cd frontend
-npm test
+npm run lint
+npm run build
 ```
+
+(`npm test` is declared in `package.json` but points at a jest that is not
+installed.)
 
 ## Deployment (FREE Options)
 
@@ -175,6 +185,10 @@ Key environment variables (see `.env.example` files):
 - `POLL_POSITIONS_INTERVAL_S` - Position polling frequency (default: 1.5s)
 - `BATTLE_WATCH_SCORE` - Threshold for "WATCH" battles (default: 0.55)
 - `BATTLE_HOT_SCORE` - Threshold for "HOT" battles (default: 0.70)
+- `TEST_MODE` - Serve generated mock data instead of calling OpenF1 (default: false)
+
+`backend/.env` is read on startup. Real environment variables take precedence,
+so `TEST_MODE=true uvicorn app.main:app` overrides the file.
 
 **Frontend:**
 
@@ -182,17 +196,25 @@ Key environment variables (see `.env.example` files):
 
 ## Development Status
 
-This is a starter skeleton with:
+Working end to end. The backend polls OpenF1, detects and scores battles, and
+serves them over REST; the frontend renders them live.
 
-- ✅ Complete project structure
-- ✅ Configuration and package files
-- ✅ Stub implementations with clear TODOs
-- ✅ Docker setup for local development
-- 🚧 Battle detection algorithm (in progress)
-- 🚧 OpenF1 polling loops (in progress)
-- 🚧 Frontend components (in progress)
+- ✅ Battle detection and scoring
+- ✅ OpenF1 polling loops (positions, intervals, laps, session)
+- ✅ Frontend dashboard with live refresh
+- ✅ Docker setup and CI
+- ✅ 59 backend tests
 
-See [PLAN.md](./PLAN.md) for the full implementation roadmap.
+Known limits:
+
+- Opening laps under-detect. Before any driver completes a lap there is no pace
+  delta, which caps the score below the `WATCH` threshold.
+- No frontend tests. `next build` type-checks the app in CI; that is all.
+- Blue flag situations are not detected. Battles are paired by adjacent
+  classified position, and lapped cars are never adjacent to the car lapping
+  them, so it would need pairing by track position.
+
+See [PLAN.md](./PLAN.md) for the original roadmap.
 
 ## Contributing
 
@@ -209,4 +231,5 @@ MIT
 
 ---
 
-**Note**: This app is in active development. Some features mentioned in PLAN.md are not yet implemented. Check the TODOs in the code for current status.
+**Note**: PLAN.md is the original design document and describes some features that
+were never built. This README describes what the code actually does.

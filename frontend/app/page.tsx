@@ -2,7 +2,6 @@
 
 import { ConnectionStatus } from './components/ConnectionStatus'
 import { BattlesList } from './components/BattlesList'
-import { Watchlist } from './components/Watchlist'
 import { useBattles } from './hooks/useBattles'
 import { useSession } from './hooks/useSession'
 
@@ -25,19 +24,13 @@ export default function Home() {
           )}
         </header>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2">
-            <h2 className="text-2xl font-semibold mb-4">Top Battles Now</h2>
-            {isLoading ? (
-              <div className="text-gray-400">Loading battles...</div>
-            ) : (
-              <BattlesList battles={battles || []} />
-            )}
-          </div>
-
-          <div className="lg:col-span-1">
-            <Watchlist />
-          </div>
+        <div>
+          <h2 className="text-2xl font-semibold mb-4">Top Battles Now</h2>
+          {isLoading ? (
+            <div className="text-gray-400">Loading battles...</div>
+          ) : (
+            <BattlesList battles={battles || []} />
+          )}
         </div>
       </div>
     </main>
