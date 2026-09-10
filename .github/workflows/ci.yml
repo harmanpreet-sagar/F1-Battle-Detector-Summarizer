@@ -33,11 +33,11 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Run tests
-        # TEST_MODE keeps the suite off the network. Nothing here should reach
-        # api.openf1.org, and a test that starts trying to should fail loudly
-        # rather than turn CI red on race weekends.
+        # DATA_MODE=mock keeps the suite off the network. Nothing here should
+        # reach api.openf1.org, and a test that starts trying to should fail
+        # loudly rather than turn CI red on race weekends.
         env:
-          TEST_MODE: 'true'
+          DATA_MODE: 'mock'
         run: pytest --cov=app --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage

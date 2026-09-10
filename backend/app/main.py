@@ -4,16 +4,17 @@ FastAPI application entry point with background tasks for polling OpenF1 API.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from typing import Dict, Optional
+from typing import Dict
 import asyncio
 import logging
 
 from app.clock import WallClock
 from app.config import config
 from app.health import get_health_status, health_manager
-from app.openf1_client import openf1_client, OpenF1APIError
-from app.pipeline import RacePipeline, TickData
+from app.openf1_client import openf1_client
+from app.pipeline import RacePipeline
 from app.session import session_manager
+from app.sources import build_source
 from app.mock_data import mock_data_generator
 
 # Configure logging
@@ -39,12 +40,6 @@ def current_pipeline() -> RacePipeline:
     return app.state.pipelines[app.state.active_pipeline]
 
 
-def current_track_status() -> Optional[str]:
-    """Track status as the session reports it. Always None live until B4."""
-    session = session_manager.get_current_session()
-    return session.track_status if session else None
-
-
 def reset_for_new_session(session_key):
     """Drop everything accumulated for the previous session."""
     logger.info(f"New session {session_key} - clearing driver state and battles")
@@ -57,9 +52,9 @@ async def poll_session_status():
 
     while True:
         try:
-            # TEST MODE: Use mock session
-            if config.TEST_MODE:
-                logger.info("TEST MODE: Using mock session")
+            # MOCK MODE: Use a generated session
+            if config.DATA_MODE == "mock":
+                logger.debug("Mock mode: using generated session")
                 if session_manager.set_session(mock_data_generator.generate_mock_session()):
                     reset_for_new_session(session_manager.current_session.session_key)
                 health_manager.active_session = True
@@ -85,92 +80,18 @@ async def poll_session_status():
             await asyncio.sleep(retry_delay)
 
 
-async def poll_positions():
-    """Background task to poll position data and update driver states."""
-    retry_delay = 1.0
-    max_retry_delay = 30.0
+async def run_source(source, pipeline: RacePipeline):
+    """
+    The one loop that drives everything.
 
-    # Lap data changes once a lap, so it is refreshed on its own slower cadence
-    # and reused across position polls.
-    cached_laps: dict = {}
-    laps_fetched_at = None
-
-    while True:
-        try:
-            pipeline = current_pipeline()
-
-            # TEST MODE: Use mock data
-            if config.TEST_MODE:
-                logger.info("TEST MODE: Generating mock driver data")
-                pipeline.ingest(TickData(
-                    states=mock_data_generator.generate_driver_states(),
-                    track_status=current_track_status(),
-                ))
-                pipeline.detect()
-                health_manager.record_successful_position_poll()
-                health_manager.active_session = True
-
-                await asyncio.sleep(config.POLL_POSITIONS_INTERVAL_S)
-                continue
-
-            # NORMAL MODE: Real OpenF1 data
-            # Only poll if we have an active session
-            if not session_manager.is_session_active():
-                await asyncio.sleep(5)
-                continue
-
-            session = session_manager.get_current_session()
-            session_key = session.session_key
-
-            # Get latest positions and driver info. Gaps come from /intervals -
-            # /position carries position numbers only.
-            positions = await openf1_client.get_latest_positions(session_key)
-            intervals = await openf1_client.get_latest_intervals(session_key)
-            drivers_data = await openf1_client.get_drivers(session_key)
-
-            # Refresh lap data on its own cadence
-            loop_now = asyncio.get_event_loop().time()
-            if laps_fetched_at is None or (loop_now - laps_fetched_at) >= config.POLL_LAPS_INTERVAL_S:
-                cached_laps = await openf1_client.get_latest_laps(
-                    session_key, count=config.BATTLE_PACE_TREND_WINDOW
-                )
-                laps_fetched_at = loop_now
-                health_manager.record_successful_lap_poll()
-                logger.debug(f"Refreshed lap data for {len(cached_laps)} drivers")
-
-            # Create driver info lookup
-            drivers_info = {d["driver_number"]: d for d in drivers_data if "driver_number" in d}
-
-            # Update state manager
-            if positions:
-                pipeline.ingest(TickData(
-                    positions=positions,
-                    intervals=intervals,
-                    drivers_info=drivers_info,
-                    laps=cached_laps,
-                    track_status=current_track_status(),
-                ))
-                pipeline.detect()
-                health_manager.record_successful_position_poll()
-                logger.debug(
-                    f"Updated positions for {len(positions)} drivers "
-                    f"({len(intervals)} interval rows)"
-                )
-
-            # Reset retry delay on success
-            retry_delay = config.POLL_POSITIONS_INTERVAL_S
-            await asyncio.sleep(config.POLL_POSITIONS_INTERVAL_S)
-
-        except OpenF1APIError as e:
-            logger.error(f"OpenF1 API error in position polling: {e}")
-            health_manager.record_error()
-            await asyncio.sleep(retry_delay)
-            retry_delay = min(retry_delay * 2, max_retry_delay)
-
-        except Exception as e:
-            logger.exception(f"Unexpected error in position polling: {e}")
-            health_manager.record_error()
-            await asyncio.sleep(retry_delay)
+    Every mode is this same three lines; what differs is only which source is
+    plugged in and what its clock says. Phase 1 adds ReplaySource and this does
+    not change.
+    """
+    logger.info(f"Running {source.name} source into '{pipeline.name}' pipeline")
+    async for tick in source.ticks():
+        pipeline.ingest(tick)
+        pipeline.detect()
 
 
 @asynccontextmanager
@@ -178,9 +99,12 @@ async def lifespan(app: FastAPI):
     """Manage background tasks lifecycle."""
     global position_poll_task, session_poll_task
 
-    logger.info("Starting background polling tasks...")
+    logger.info(f"Starting background tasks (DATA_MODE={config.DATA_MODE})...")
+    pipeline = current_pipeline()
+    source = build_source(config.DATA_MODE, pipeline.clock, session_manager)
+
     session_poll_task = asyncio.create_task(poll_session_status())
-    position_poll_task = asyncio.create_task(poll_positions())
+    position_poll_task = asyncio.create_task(run_source(source, pipeline))
 
     yield
 

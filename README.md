@@ -10,7 +10,7 @@ Real-time Formula 1 battle detection and tracking system. A live race companion 
 - 📊 Gap trend sparklines
 - 📱 Mobile-first responsive design
 - 🔴 Live connection status indicator
-- 🧪 `TEST_MODE` for developing without a live session
+- 🧪 `DATA_MODE=mock` for developing without a live session
 
 ## Architecture
 
@@ -106,7 +106,7 @@ F1-Battle-Detector-Summarizer/
 │   │   ├── battle.py         # Battle detection and scoring
 │   │   ├── session.py        # Session lifecycle
 │   │   ├── health.py         # Health monitoring
-│   │   ├── mock_data.py      # TEST_MODE data generator
+│   │   ├── mock_data.py      # DATA_MODE=mock data generator
 │   │   └── config.py         # Configuration
 │   ├── tests/                # Unit and integration tests
 │   ├── requirements.txt
@@ -185,10 +185,16 @@ Key environment variables (see `.env.example` files):
 - `POLL_POSITIONS_INTERVAL_S` - Position polling frequency (default: 1.5s)
 - `BATTLE_WATCH_SCORE` - Threshold for "WATCH" battles (default: 0.55)
 - `BATTLE_HOT_SCORE` - Threshold for "HOT" battles (default: 0.70)
-- `TEST_MODE` - Serve generated mock data instead of calling OpenF1 (default: false)
+- `DATA_MODE` - Where driver data comes from: `live`, `replay` or `mock` (default: `mock`)
+  - `mock` - generated data, never touches the network. What CI runs.
+  - `live` - OpenF1 live timing; needs `OPENF1_API_TOKEN` (paid Sponsor tier)
+  - `replay` - a cached historical race (Phase 1, not yet implemented)
+- `OPENF1_API_TOKEN` - Sponsor-tier token, required only for `DATA_MODE=live`
+- `TEST_MODE` - Deprecated alias for `DATA_MODE`. Honoured only when `DATA_MODE`
+  is unset (`true` maps to `mock`, `false` to `live`) and warns at startup.
 
 `backend/.env` is read on startup. Real environment variables take precedence,
-so `TEST_MODE=true uvicorn app.main:app` overrides the file.
+so `DATA_MODE=mock uvicorn app.main:app` overrides the file.
 
 **Frontend:**
 
