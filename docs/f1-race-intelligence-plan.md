@@ -13,11 +13,11 @@ Repo: [`harmanpreet-sagar/F1-Battle-Detector-Summarizer`](https://github.com/har
 3. [What we're building](#3-what-were-building)
 4. [Where the code is today](#4-where-the-code-is-today)
 5. [Phase 0: Foundations](#phase-0--foundations)
-6. [Phase 1: Race Replay (built on Replit, then apply)](#phase-1--race-replay-built-on-replit--then-apply)
+6. [Phase 1: Race Replay](#phase-1--race-replay)
 7. [Phase 2: Post-race Battle Reports](#phase-2--post-race-battle-reports)
 8. [Phase 3: Overtake Prediction](#phase-3--overtake-prediction)
 9. [Cross-cutting work](#9-cross-cutting-work)
-10. [The Replit application package](#10-the-replit-application-package)
+10. [Publishing the demo](#10-publishing-the-demo)
 11. [Timeline](#11-timeline)
 12. [Risks and mitigations](#12-risks-and-mitigations)
 13. [Open questions](#13-open-questions)
@@ -31,9 +31,8 @@ Repo: [`harmanpreet-sagar/F1-Battle-Detector-Summarizer`](https://github.com/har
 |---|---|
 | OpenF1 **live** data needs the paid Sponsor tier (€9.90/month). Data counts as live "from 30 minutes before a session starts until 30 minutes after it ends." | The project as originally designed can't run publicly for free. |
 | OpenF1 **historical** data is free, needs no key, and covers every session since 2023. | Every race since 2023 is available, and each new race becomes free about 30 minutes after it ends. |
-| Races only run for a few hours on race weekends. | A live-only demo shows nothing most of the time a recruiter clicks it. Live mode was a weak demo even before the paywall. |
+| Races only run for a few hours on race weekends. | A live-only demo shows nothing most of the time someone opens it. Live mode was a weak demo even before the paywall. |
 | A live system has no ground truth. | You can't measure whether it flagged the *right* battles. Historical data tells you how every battle ended, so the project becomes measurable. |
-| The Replit posting says: *"Applications without a Replit project submitted will not be reviewed."* | We need a real, public Replit project, and ideally one that was actually built there. |
 
 **New positioning:** a race-analysis system that replays any race since 2023 through the detection engine, publishes a battle report after every Grand Prix, and predicts which battles will end in an overtake. It's measured on real outcomes.
 
@@ -45,8 +44,8 @@ Repo: [`harmanpreet-sagar/F1-Battle-Detector-Summarizer`](https://github.com/har
 
 | Question | Decision |
 |---|---|
-| When to apply to Replit | **After Phase 1 (replay) is published on Replit.** Update the link as Phases 2–3 land. |
-| How much happens in Replit | **Replay is built in the Replit workspace and published from there.** Everything else is built in GitHub as usual. |
+| When to publish | **As soon as Phase 1 (replay) works.** Publish from Replit, then keep the live app updated as Phases 2–3 land. |
+| How much happens in Replit | **Feature work happens in GitHub; deployment and the platform-shaped design work happen in the Replit workspace.** The Replit App is connected to this repo, so it isn't a copy — it's a checkout with a run configuration. The sleep-proof broadcast schedule (1.4) and single-app packaging (1.7) exist *because* of free-tier limits, so they get written and debugged there and merged back by PR. |
 | Report text | **Template first, LLM later.** Deterministic, testable text now; LLM narrative as an optional layer with the template as fallback. |
 | Where reports go | **In the web app** (a Reports page) **and as Markdown in the repo** (one file per race, committed automatically). |
 | Budget | $0. Replit Starter (free) plan, OpenF1 free tier, GitHub Actions free minutes. |
@@ -183,11 +182,11 @@ class DataSource(Protocol):
 - [ ] New clock tests pass.
 
 ---
-## Phase 1 — Race Replay (built on Replit) → then apply
+## Phase 1 — Race Replay
 
-> **Goal:** a public `replit.app` URL showing a real race replaying through the detector, published from a Replit workspace where the replay feature was built.
-> **Where:** Replit workspace (free Starter plan), pushing to GitHub. **Rough size:** 15–25 focused hours.
-> **Exit:** submit the Replit application.
+> **Goal:** a public `replit.app` URL showing a real race replaying through the detector.
+> **Where:** GitHub for 1.1–1.3, 1.5, 1.6 and 1.8; the Replit workspace (free Starter plan) for 1.4, 1.7 and publishing. **Rough size:** 15–25 focused hours.
+> **Exit:** the demo is live and linked from the README.
 
 ### 1.1 Race ingest and cache
 
@@ -313,17 +312,27 @@ On boot or wake, compute where the broadcast *should* be, seek there in fast mod
 - Schedule: `locate(offset)` wraps correctly across playlist boundaries.
 - API: `/api/replay/status` shape; static files served at `/`; `/api/*` still wins over static.
 
-### 1.9 Doing it in Replit, and keeping evidence
+### 1.9 Splitting the work between GitHub and Replit
 
-- Import the GitHub repo into Replit and build 1.1–1.7 in the workspace, committing to a `feature/replay` branch from Replit and merging via PR.
-- Keep a short `docs/replit-build-log.md`: what was built in Replit, problems hit (memory, sleep, build), how each was solved. This doubles as interview material.
-- Take 3–4 screenshots and a 30–60s screen recording (GIF or video) of the replay. These go in the README and protect you if the free published link expires (see §10).
+The two environments are the same repo, so the split is about *where a problem is cheapest to solve*, not about where the code lives.
 
-### 1.10 Minimum shippable cut (if time runs short before applying)
+| Work | Where | Why |
+|---|---|---|
+| 1.1–1.3 ingest, timeline, replay engine; 1.5 API; 1.6 frontend; 1.8 tests | GitHub, normal editor + PRs | Pure logic. Nothing about it is platform-specific, and the local test loop is faster. |
+| 1.4 broadcast schedule | **Replit workspace** | The stateless schedule exists to survive the free tier's sleep. You can only tell whether it works by letting a real app sleep and wake. |
+| 1.7 single-app packaging, `.replit`, build fallback | **Replit workspace** | Config keys, `$PORT` binding, build memory and static mounting are all properties of the platform. Guessing at them locally and pushing to see what breaks is the slow way round. |
+| Publishing, secrets, the deployed app | **Replit workspace** | It's the deploy target. |
+
+- Connect the repo to a Replit App early — before 1.4 — so packaging problems surface while there's still time to design around them, rather than at the end.
+- Commit Replit-side work from the workspace on a `feature/replay-packaging` branch and merge it by PR, same as any other branch.
+- Keep a short `docs/replit-build-log.md`: what was built in the workspace, problems hit (memory, sleep, build, config), how each was solved. Future-you will need it the next time the free tier shifts.
+- Take 3–4 screenshots and a 30–60s screen recording (GIF or video) of the replay. These go in the README and keep the project presentable if the free published link expires (see §10).
+
+### 1.10 Minimum shippable cut (if time runs short before publishing)
 
 Must ship: 0.1–0.3, 1.1, 1.2, 1.3 (without seek optimisation), 1.4 with a **single race looping**, track status from race control, 1.5 prefix + status endpoint, 1.6 header + badge + SC banner, 1.7.
 
-Can slip until after applying: playlist of multiple races, stateless schedule (a restart from lap 1 on wake is acceptable), tyre info on cards, "up next", live-equivalence test (write it right after).
+Can slip until after publishing: playlist of multiple races, stateless schedule (a restart from lap 1 on wake is acceptable), tyre info on cards, "up next", live-equivalence test (write it right after).
 
 **Acceptance for Phase 1:**
 - [ ] Public `replit.app` URL shows a real race replay with battles on screen within ~30s of a cold start.
@@ -331,7 +340,7 @@ Can slip until after applying: playlist of multiple races, stateless schedule (a
 - [ ] Lap counter and race name correct; honesty badge and disclaimer visible.
 - [ ] CI green; new tests added; `DATA_MODE=mock` still works.
 - [ ] README has a demo link, screenshots/GIF and a "How replay works" section.
-- [ ] **Application submitted.**
+- [ ] Demo link verified in a private browser window and after a cold start.
 
 ---
 ## Phase 2 — Post-race Battle Reports
@@ -566,7 +575,7 @@ These numbers go in the README and give Phase 3 its baseline.
 | Per-circuit and per-season breakdown | Where it fails (street circuits, wet races) |
 | Split A vs B vs C comparison | The regulation-change story |
 
-**Headline for README and resume** (fill in real numbers):
+**Headline for the README** (fill in real numbers):
 > "On held-out 2025 races, the model reached PR-AUC **X** vs **Y** for the rule-based detector. Under 2026's new overtaking rules, performance dropped to **Z**; adding half a season of 2026 data recovered it to **W**."
 
 ### 3.7 Code layout
@@ -673,52 +682,27 @@ README rewrite at the end of each phase, in this order: demo link + GIF → what
 
 ---
 
-## 10. The Replit application package
+## 10. Publishing the demo
 
-**Posting:** Software Engineer, New Grad (2027). Foster City, CA, hybrid (Mon/Wed/Fri in office). Requires a 2027 CS/CE (or related) degree, JS/TS or Python (or Go/Rust), and full-stack React/Node/database experience. Valued: systematic problem-solving, autonomy, communication, automation-focused thinking. **"Applications without a Replit project submitted will not be reviewed."**
+### 10.1 Before sharing the link
 
-### 10.1 Before submitting
-
-- [ ] Replit project is **viewable by reviewers**. Check the project's visibility/sharing settings.
 - [ ] Published app link works in a private browser window and after a cold start.
-- [ ] README top section has the demo link, GIF and a 3-line summary that mentions it was built and deployed on Replit.
+- [ ] README top section has the demo link, GIF and a 3-line summary of what the project does.
 - [ ] `docs/replit-build-log.md` exists.
-- [ ] Have both links ready: **Replit project URL** and **published `replit.app` URL**, plus the GitHub repo. The application form didn't load outside a browser when this plan was written, so check exactly which fields it asks for.
+- [ ] The published `replit.app` URL and the GitHub repo link are both recorded somewhere durable.
 
 ### 10.2 The 30-day free-publish limit
 
-The free plan's published link **goes down after 30 days**, and reviews can take longer than that.
+The free plan's published link **goes down after 30 days**.
 
 - Note the publish date and put a reminder on day 25.
 - Before the link expires, check whether the free plan lets you republish. This couldn't be confirmed in advance.
 - The GIF, screenshots and README carry the project even while the link is down.
 - Re-publishing after Phase 2 lands naturally resets the clock, if republishing is allowed.
 
-### 10.3 How the posting maps to the project
+### 10.3 Optional: a database for reports
 
-| Posting says | Project shows |
-|---|---|
-| Full-stack React + Python | Next.js/React/TypeScript frontend, FastAPI backend, typed API contracts |
-| One-click deployments at scale / cloud environments | Designed around free-tier constraints: single-process packaging, a sleep-proof stateless schedule, a build-memory fallback |
-| Automation-focused thinking | Scheduled post-race pipeline, idempotent ingest, auto-committed reports, retrain promotion gate |
-| Systematic problem-solving | Clock injection, live-equivalence test, SC false positives found and fixed, label cross-checking |
-| Technical communication | Reports themselves, model card, build log, README |
-| Database experience | *Gap:* everything is files today. Optional: store episodes and reports in Replit's database or SQLite, and query them for the Reports page. Worth a small task after Phase 2 if time allows. |
-
-### 10.4 Draft resume bullets (fill in numbers as they become real)
-
-- Built a race-replay engine that feeds historical F1 timing data through the same detection pipeline as live mode, verified by a tick-for-tick equivalence test; deployed full-stack (FastAPI + Next.js) on Replit.
-- Automated post-race battle reports with GitHub Actions: ingest → segment **N** battle episodes per race → cross-validated overtake labels (**X%** source agreement) → Markdown/JSON reports published within hours of each Grand Prix.
-- Trained a calibrated overtake-prediction model (PR-AUC **X** vs **Y** for the rule-based baseline on held-out races) and quantified its degradation under 2026's new overtaking rules.
-
-### 10.5 Interview talking points
-
-1. Why historical replay was the better product than live, and not just the cheaper one.
-2. The `datetime.now()` bug class: how wall-clock coupling silently breaks confidence scoring and eviction under replay.
-3. Proving replay equals live (the equivalence test) rather than asserting it.
-4. Safety cars creating fake battles, and how race control data fixed it.
-5. Label noise: two imperfect pass sources and measuring their agreement.
-6. Why splits are temporal and grouped by race, and what happens under a regulation change.
+Everything is files today. Storing episodes and reports in Replit's database or SQLite, and querying them for the Reports page, would remove the raw-GitHub fetch described in 2.6 and make season filtering and cross-race queries cheap. Worth a small task after Phase 2 if time allows; files are fine until the report count makes them awkward.
 
 ---
 
@@ -729,14 +713,14 @@ Assumes roughly **20 focused hours/week**. Scale the dates if your availability 
 | Window | Work | Milestone |
 |---|---|---|
 | **Sep 11–12** | Phase 0 (clock, pipeline, sources) | PR merged, CI green |
-| **Sep 12–18** | Phase 1 in Replit (ingest, timeline, replay, packaging, publish) | Public `replit.app` URL |
-| **~Sep 19** | README, GIF, build log, checklist in §10.1 | **Apply to Replit** |
+| **Sep 12–18** | Phase 1: ingest, timeline, replay in GitHub; schedule, packaging and publish in Replit | Public `replit.app` URL |
+| **~Sep 19** | README, GIF, build log, checklist in §10.1 | **Demo published and shareable** |
 | Sep 21 – Oct 4 | Phase 2 (analyzer, episodes, outcomes, reports, Action, backfill) | Reports page live; first automatic 2026 report |
-| Oct 5–11 | Detector evaluation (2.8), README metrics, optional database task | First real metrics published |
+| Oct 5–11 | Detector evaluation (2.8), README metrics, optional database task (§10.3) | First real metrics published |
 | Oct 12 – Nov 15 | Phase 3 (dataset, features, splits, models, model card, serving) | Pass probability live behind flag |
 | Rest of season | Automatic reports; one or two manual retrains | Season-long track record |
 
-If the Phase 1 date slips, apply using the **minimum shippable cut** (§1.10) rather than waiting.
+If the Phase 1 date slips, publish the **minimum shippable cut** (§1.10) rather than waiting for the full feature set.
 
 ---
 
@@ -745,7 +729,7 @@ If the Phase 1 date slips, apply using the **minimum shippable cut** (§1.10) ra
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
 | `next build` runs out of memory on a free Replit workspace | Medium | Blocks publish | `replit-dist.yml` builds in Actions; Replit pulls prebuilt `frontend/out` |
-| Free published link expires after 30 days during review | High | Reviewer sees a dead link | Day-25 reminder; check republish; GIF and screenshots in README |
+| Free published link expires after 30 days | High | Visitors hit a dead link | Day-25 reminder; check republish; GIF and screenshots in README |
 | App sleeps; cold start shows nothing | High | Bad first impression | Stateless schedule + fast seek; loading state that says "Warming up replay…" |
 | OpenF1 rate limits (undocumented) or temporary outage | Medium | Ingest fails | Fetch once and cache; backoff; curated races committed so the app never needs OpenF1 at runtime |
 | `overtakes` endpoint incomplete | Known | Noisy labels | Cross-check with position changes; publish agreement rate; position-based labels by default |
@@ -753,7 +737,7 @@ If the Phase 1 date slips, apply using the **minimum shippable cut** (§1.10) ra
 | Interval feed gaps or lag | Medium | Jumpy gaps, bad closing rates | Existing gap-sample timestamps + staleness logic; episode merge window |
 | 2026 rules break the model | High | Worse 2026 predictions | Planned Split B/C evaluation; report it openly |
 | Replit's 2 GB storage | Low with plan | Workspace full | Only curated races in Replit; bulk raw data in Actions artifacts/Release assets |
-| Scope creep before applying | High | Application delayed | Hard cut line in §1.10; apply first, polish after |
+| Scope creep before publishing | High | Demo never goes live | Hard cut line in §1.10; publish first, polish after |
 | Wall-clock bugs hiding elsewhere | Medium | Subtle replay errors | Grep-enforced rule: no `datetime.now()` outside `clock.py`, `health.py` and `sources/mock.py` (add a test that fails on it) |
 
 ---
@@ -767,7 +751,7 @@ None of these block Phase 0. Answer them as each phase starts.
 3. **Sprints in reports:** data only (current plan), or separate sprint reports too?
 4. **LLM provider** for 2.9: pick when you get there, based on free tiers available at that time.
 5. **Repo name:** keep `F1-Battle-Detector-Summarizer` (fits well now that Summarizer is real) or rename?
-6. **Database task** (§10.3): worth adding for the "database experience" line in the posting?
+6. **Database task** (§10.3): move episodes and reports into a database after Phase 2, or do flat files stay good enough?
 
 ---
 
@@ -788,4 +772,4 @@ None of these block Phase 0. Answer them as each phase starts.
 | `starting_grid` | grid positions | Available after official results |
 | `weather` | rainfall, temperatures | Every minute; Phase 3 v2 |
 
-**Sources:** [OpenF1 (pricing, live vs historical)](https://openf1.org/) · [OpenF1 API docs](https://openf1.org/docs/) · [Replit Starter plan](https://docs.replit.com/billing/plans/starter-plan) · [Replit New Grad 2027 posting](https://jobs.ashbyhq.com/replit/b5e81eae-06f9-4798-8988-2d06ca936dbc) · [F1 2026 terms explained (The Race)](https://www.the-race.com/formula-1/boost-overtake-mode-active-aero-recharge-key-2026-terms-explained/) · [FastF1 PR #760 (live timing auth)](https://github.com/theOehrly/Fast-F1/pull/760)
+**Sources:** [OpenF1 (pricing, live vs historical)](https://openf1.org/) · [OpenF1 API docs](https://openf1.org/docs/) · [Replit Starter plan](https://docs.replit.com/billing/plans/starter-plan) · [F1 2026 terms explained (The Race)](https://www.the-race.com/formula-1/boost-overtake-mode-active-aero-recharge-key-2026-terms-explained/) · [FastF1 PR #760 (live timing auth)](https://github.com/theOehrly/Fast-F1/pull/760)
