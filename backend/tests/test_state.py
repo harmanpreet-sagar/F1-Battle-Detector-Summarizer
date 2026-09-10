@@ -9,12 +9,17 @@ from app.models import DriverState, SessionStatus
 from app.session import SessionManager
 from app.state import StateManager, parse_gap, parse_openf1_timestamp
 
-BASE_TIME = datetime(2026, 1, 1, 12, 0, 0)
+BASE_TIME = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
 
 def iso(offset_s: float = 0.0) -> str:
-    """An OpenF1-style timestamp `offset_s` seconds in the past."""
-    return (datetime.now(timezone.utc) - timedelta(seconds=offset_s)).isoformat().replace(
+    """
+    An OpenF1-style timestamp `offset_s` seconds before BASE_TIME.
+
+    Anchored to BASE_TIME rather than to the wall so the confidence assertions
+    below test the injected clock instead of how long the test took to run.
+    """
+    return (BASE_TIME - timedelta(seconds=offset_s)).isoformat().replace(
         "+00:00", "Z"
     )
 
@@ -66,7 +71,9 @@ def test_gaps_come_from_intervals_not_positions(manager):
         {"driver_number": 44, "interval": 0.42, "gap_to_leader": 0.42, "date": iso(1.0)},
     ]
 
-    manager.update_from_openf1_positions(positions, DRIVERS_INFO, intervals=intervals)
+    manager.update_from_openf1_positions(
+        positions, DRIVERS_INFO, intervals=intervals, now=BASE_TIME
+    )
 
     chaser = manager.get_current_state(44)
     assert chaser.gap_to_ahead_s == 0.42
@@ -79,7 +86,7 @@ def test_gaps_come_from_intervals_not_positions(manager):
 def test_positions_without_intervals_leave_gaps_none(manager):
     positions = [{"driver_number": 44, "position": 2, "date": iso()}]
 
-    manager.update_from_openf1_positions(positions, DRIVERS_INFO)
+    manager.update_from_openf1_positions(positions, DRIVERS_INFO, now=BASE_TIME)
 
     state = manager.get_current_state(44)
     assert state.gap_to_ahead_s is None
@@ -95,13 +102,15 @@ def test_stale_interval_is_carried_forward_with_its_original_timestamp(manager):
     intervals = [{"driver_number": 44, "interval": 0.5, "gap_to_leader": 0.5, "date": iso(1.0)}]
 
     manager.update_from_openf1_positions(
-        [{"driver_number": 44, "position": 2, "date": iso()}], DRIVERS_INFO, intervals=intervals
+        [{"driver_number": 44, "position": 2, "date": iso()}], DRIVERS_INFO,
+        intervals=intervals, now=BASE_TIME,
     )
     first = manager.get_current_state(44)
 
     # Next poll: fresh position, no new interval row
     manager.update_from_openf1_positions(
-        [{"driver_number": 44, "position": 2, "date": iso()}], DRIVERS_INFO, intervals=[]
+        [{"driver_number": 44, "position": 2, "date": iso()}], DRIVERS_INFO,
+        intervals=[], now=BASE_TIME,
     )
     second = manager.get_current_state(44)
 
@@ -115,7 +124,9 @@ def test_long_stale_gap_downgrades_confidence(manager):
     positions = [{"driver_number": 44, "position": 2, "date": iso()}]
     intervals = [{"driver_number": 44, "interval": 0.5, "date": iso(60.0)}]
 
-    manager.update_from_openf1_positions(positions, DRIVERS_INFO, intervals=intervals)
+    manager.update_from_openf1_positions(
+        positions, DRIVERS_INFO, intervals=intervals, now=BASE_TIME
+    )
 
     assert manager.get_current_state(44).data_confidence == "low"
 
@@ -124,7 +135,9 @@ def test_lapped_car_interval_string_does_not_crash_the_join(manager):
     positions = [{"driver_number": 44, "position": 20, "date": iso()}]
     intervals = [{"driver_number": 44, "interval": "+1 LAP", "gap_to_leader": "+1 LAP", "date": iso()}]
 
-    manager.update_from_openf1_positions(positions, DRIVERS_INFO, intervals=intervals)
+    manager.update_from_openf1_positions(
+        positions, DRIVERS_INFO, intervals=intervals, now=BASE_TIME
+    )
 
     state = manager.get_current_state(44)
     assert state.gap_to_ahead_s is None
@@ -145,7 +158,9 @@ def test_last_lap_time_populated_from_lap_data(manager):
         ]
     }
 
-    manager.update_from_openf1_positions(positions, DRIVERS_INFO, laps=laps)
+    manager.update_from_openf1_positions(
+        positions, DRIVERS_INFO, laps=laps, now=BASE_TIME
+    )
 
     # Most recent completed lap
     assert manager.get_current_state(44).last_lap_time_s == 89.9
@@ -154,7 +169,9 @@ def test_last_lap_time_populated_from_lap_data(manager):
 def test_missing_lap_data_leaves_lap_time_none(manager):
     positions = [{"driver_number": 44, "position": 2, "date": iso()}]
 
-    manager.update_from_openf1_positions(positions, DRIVERS_INFO, laps={})
+    manager.update_from_openf1_positions(
+        positions, DRIVERS_INFO, laps={}, now=BASE_TIME
+    )
 
     assert manager.get_current_state(44).last_lap_time_s is None
 

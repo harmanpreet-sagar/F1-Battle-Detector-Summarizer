@@ -4,7 +4,7 @@ HTTP-level tests for the battle endpoint.
 State is seeded directly and no lifespan is started, so the polling tasks never
 run - which is the point: these assert what the endpoint does on its own.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
@@ -14,12 +14,17 @@ from app.main import app, run_detection
 from app.models import DriverState
 from app.state import state_manager
 
-BASE_TIME = datetime(2026, 1, 1, 12, 0, 0)
+BASE_TIME = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def poll_at(poll: int) -> datetime:
+    """The instant poll number `poll` arrives. Seeded data carries the same."""
+    return BASE_TIME + timedelta(seconds=4.0 * poll)
 
 
 def seed_battle(poll: int):
     """Push one poll of a close, closing battle into the state manager."""
-    at = BASE_TIME + timedelta(seconds=4.0 * poll)
+    at = poll_at(poll)
     for number, name, position, gap, lap in (
         (1, "M. Verstappen", 1, None, 90.5),
         (44, "L. Hamilton", 2, 0.35 - 0.01 * poll, 90.0),
@@ -50,7 +55,7 @@ def test_battles_do_not_advance_on_repeated_reads():
     client = fresh_client()
     for poll in range(config.BATTLE_MIN_DURATION_UPDATES):
         seed_battle(poll)
-        run_detection()
+        run_detection(poll_at(poll))
 
     first = client.get("/battles/top?k=5").json()
     second = client.get("/battles/top?k=5").json()
@@ -64,7 +69,7 @@ def test_many_reads_do_not_mature_a_battle():
     """A battle below the threshold must not surface just because it is read."""
     client = fresh_client()
     seed_battle(0)
-    run_detection()
+    run_detection(poll_at(0))
 
     for _ in range(50):
         assert client.get("/battles/top?k=5").json()["count"] == 0
@@ -75,7 +80,7 @@ def test_detection_advances_only_when_the_poll_loop_runs():
     client = fresh_client()
     for poll in range(config.BATTLE_MIN_DURATION_UPDATES):
         seed_battle(poll)
-        run_detection()
+        run_detection(poll_at(poll))
 
     before = client.get("/battles/top?k=5").json()["battles"][0]["duration_updates"]
     for _ in range(20):
@@ -83,7 +88,7 @@ def test_detection_advances_only_when_the_poll_loop_runs():
     unchanged = client.get("/battles/top?k=5").json()["battles"][0]["duration_updates"]
 
     seed_battle(config.BATTLE_MIN_DURATION_UPDATES)
-    run_detection()
+    run_detection(poll_at(config.BATTLE_MIN_DURATION_UPDATES))
     after = client.get("/battles/top?k=5").json()["battles"][0]["duration_updates"]
 
     assert unchanged == before, "20 HTTP reads moved the counter"

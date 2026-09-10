@@ -6,6 +6,7 @@ from collections import deque
 from datetime import datetime
 import logging
 
+from app.clock import ensure_utc
 from app.models import DriverState
 from app.config import config
 
@@ -13,11 +14,17 @@ logger = logging.getLogger(__name__)
 
 
 def parse_openf1_timestamp(date_str: Optional[str]) -> Optional[datetime]:
-    """Parse an OpenF1 ISO timestamp. Returns None if absent or malformed."""
+    """
+    Parse an OpenF1 ISO timestamp into timezone-aware UTC.
+
+    Most OpenF1 rows carry an offset, but not all do. Normalising here means
+    nothing downstream has to defend against a naive value appearing in the
+    middle of a subtraction.
+    """
     if not date_str:
         return None
     try:
-        return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        return ensure_utc(datetime.fromisoformat(date_str.replace('Z', '+00:00')))
     except ValueError:
         logger.warning(f"Unparseable OpenF1 timestamp: {date_str!r}")
         return None
@@ -86,6 +93,8 @@ class StateManager:
         drivers_info: Dict[int, Dict],
         intervals: Optional[List[Dict]] = None,
         laps: Optional[Dict[int, List[Dict]]] = None,
+        *,
+        now: datetime,
     ):
         """
         Update driver states from OpenF1 position data.
@@ -96,6 +105,11 @@ class StateManager:
             intervals: Latest /intervals row per driver. /position carries no gap
                 fields, so without this every gap is None and no battle is detectable.
             laps: Recent completed laps per driver, oldest first (/laps).
+            now: Current time *in the data's own frame* - wall time when live,
+                race time under replay. Keyword-only and required on purpose: a
+                default would silently reintroduce wall-clock confidence
+                scoring, which rates every historical row 'low' and drags the
+                score of every battle in a replayed race down by 30%.
         """
         intervals_by_driver = {
             row["driver_number"]: row
@@ -111,9 +125,10 @@ class StateManager:
 
             driver_info = drivers_info.get(driver_num, {})
 
-            # Calculate data confidence based on recency
-            updated_at = parse_openf1_timestamp(pos_data.get("date")) or datetime.now()
-            age_seconds = (datetime.now(updated_at.tzinfo) - updated_at).total_seconds()
+            # Calculate data confidence based on recency, measured against the
+            # caller's clock rather than the wall.
+            updated_at = parse_openf1_timestamp(pos_data.get("date")) or now
+            age_seconds = (now - updated_at).total_seconds()
 
             if age_seconds < config.DATA_CONFIDENCE_MEDIUM_S:
                 confidence = "high"
@@ -129,7 +144,7 @@ class StateManager:
             # A gap that has not refreshed in several interval cycles is no longer
             # trustworthy for closing-rate work, even if the position row is fresh.
             if gap_updated_at is not None:
-                gap_age = (datetime.now(gap_updated_at.tzinfo) - gap_updated_at).total_seconds()
+                gap_age = (now - gap_updated_at).total_seconds()
                 if gap_age > config.INTERVAL_STALE_THRESHOLD_S:
                     confidence = "low"
 

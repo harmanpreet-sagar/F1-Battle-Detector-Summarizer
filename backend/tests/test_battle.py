@@ -2,7 +2,7 @@
 Unit tests for battle detection and scoring.
 """
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.models import BattleFlags
 from app.battle import (
@@ -16,7 +16,14 @@ from app.config import config
 from app.models import BattleFlags, DriverState
 
 
-BASE_TIME = datetime(2026, 3, 5, 14, 30, 0)
+BASE_TIME = datetime(2026, 3, 5, 14, 30, 0, tzinfo=timezone.utc)
+
+# Gap readings are 4s apart (see poll()), so this is the instant at which
+# reading `sample` arrives. Detection is run at that instant rather than at wall
+# time, which is what makes the eviction and stability assertions below mean
+# anything under replay.
+def at(sample: int) -> datetime:
+    return BASE_TIME + timedelta(seconds=4.0 * sample)
 
 
 def make_state(
@@ -269,7 +276,9 @@ def mature(detector, track_status=None):
     """Feed enough distinct gap readings for a battle to clear the filter."""
     battles = []
     for sample in range(config.BATTLE_MIN_DURATION_UPDATES):
-        battles = detector.detect(*poll(sample), track_status=track_status)
+        battles = detector.detect(
+            *poll(sample), track_status=track_status, now=at(sample)
+        )
     return battles
 
 
@@ -302,7 +311,7 @@ def test_no_battle_without_gap_data(detector):
         for state in states:
             state.gap_to_ahead_s = None
 
-        assert detector.detect(states, histories) == []
+        assert detector.detect(states, histories, now=at(sample)) == []
 
 
 def test_yellow_flag_suppresses_battle(detector):
@@ -317,7 +326,7 @@ def test_yellow_flag_suppresses_battle(detector):
 def test_battle_stability_filter(detector):
     """Test that new battles don't appear immediately."""
     seen = [
-        len(detector.detect(*poll(sample)))
+        len(detector.detect(*poll(sample), now=at(sample)))
         for sample in range(config.BATTLE_MIN_DURATION_UPDATES)
     ]
 
@@ -333,8 +342,8 @@ def test_stability_filter_counts_gap_readings_not_polls(detector):
     """
     states, histories = poll(0)
 
-    for _ in range(config.BATTLE_MIN_DURATION_UPDATES * 5):
-        assert detector.detect(states, histories) == []
+    for repeat in range(config.BATTLE_MIN_DURATION_UPDATES * 5):
+        assert detector.detect(states, histories, now=at(repeat)) == []
 
     assert detector.tracked_count == 1
     assert detector._tracked["44_1"].distinct_samples == 1
@@ -363,7 +372,10 @@ def test_long_running_battle_is_not_evicted(detector):
     tracked = detector._tracked["44_1"]
     tracked.first_seen -= timedelta(seconds=config.BATTLE_EVICTION_S * 10)
 
-    battles = detector.detect(*poll(config.BATTLE_MIN_DURATION_UPDATES))
+    battles = detector.detect(
+        *poll(config.BATTLE_MIN_DURATION_UPDATES),
+        now=at(config.BATTLE_MIN_DURATION_UPDATES),
+    )
 
     assert len(battles) == 1
     assert battles[0].duration_updates == config.BATTLE_MIN_DURATION_UPDATES + 1
@@ -382,7 +394,9 @@ def test_battle_evicted_after_absence(detector):
     for state in states:
         state.gap_to_ahead_s = None
 
-    assert detector.detect(states, histories) == []
+    assert detector.detect(
+        states, histories, now=at(config.BATTLE_MIN_DURATION_UPDATES)
+    ) == []
     assert detector.tracked_count == 0
 
 
@@ -411,9 +425,9 @@ def test_cache_is_empty_before_first_detection(detector):
 
 
 def test_detected_at_advances_with_each_run(detector):
-    detector.detect(*poll(0))
+    detector.detect(*poll(0), now=at(0))
     first = detector.detected_at
-    detector.detect(*poll(1))
+    detector.detect(*poll(1), now=at(1))
 
     assert first is not None
     assert detector.detected_at >= first

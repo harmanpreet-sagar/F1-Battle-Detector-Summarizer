@@ -6,6 +6,7 @@ from typing import List
 import math
 import random
 
+from app.clock import utcnow
 from app.models import DriverState, SessionStatus
 from app.config import config
 
@@ -49,7 +50,7 @@ class MockDataGenerator:
     
     def __init__(self):
         self.tick = 0
-        self.started_at = datetime.now()
+        self.started_at = utcnow()
         self.base_gaps = self._initialize_gaps()
     
     def _initialize_gaps(self):
@@ -82,7 +83,7 @@ class MockDataGenerator:
         self.tick += 1
         states = []
 
-        now = datetime.now()
+        now = utcnow()
 
         # Gaps advance only when /intervals would have refreshed, and carry the
         # timestamp of that refresh rather than of this poll. Derived from a
@@ -180,13 +181,13 @@ class MockDataGenerator:
             total_laps=50,
             track_status="green",
             gmt_offset="+00:00",
-            updated_at=datetime.now()
+            updated_at=utcnow()
         )
     
     def reset(self):
         """Reset the mock data generator."""
         self.tick = 0
-        self.started_at = datetime.now()
+        self.started_at = utcnow()
         self.base_gaps = self._initialize_gaps()
 
 

@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 import asyncio
 import logging
 
+from app.clock import WallClock
 from app.config import config
 from app.health import get_health_status, health_manager
 from app.openf1_client import openf1_client, OpenF1APIError
@@ -26,6 +27,10 @@ logger = logging.getLogger(__name__)
 # Global task references
 position_poll_task = None
 session_poll_task = None
+
+# Live mode reads real time. Replay swaps this for a ReplayClock in Phase 1;
+# everything downstream already takes the instant as an argument.
+clock = WallClock()
 
 
 def reset_for_new_session(session_key):
@@ -75,13 +80,16 @@ async def poll_session_status():
             await asyncio.sleep(retry_delay)
 
 
-def run_detection():
+def run_detection(now):
     """
     Run battle detection over current state and cache the result.
 
     Called once per data poll. Detection used to run inside GET /battles/top,
     which meant the stability filter counted HTTP requests: two open tabs
     matured battles twice as fast and zero clients matured them never.
+
+    `now` is passed in rather than read here so that one poll's state update and
+    its detection share a single instant.
     """
     driver_states = state_manager.get_all_current_states()
     if not driver_states:
@@ -95,7 +103,7 @@ def run_detection():
     session = session_manager.get_current_session()
     track_status = session.track_status if session else None
 
-    battles = battle_detector.detect(driver_states, driver_histories, track_status)
+    battles = battle_detector.detect(driver_states, driver_histories, track_status, now=now)
     logger.debug(f"Detection: {len(battles)} battles shown, {battle_detector.tracked_count} tracked")
 
 
@@ -120,7 +128,7 @@ async def poll_positions():
                 for state in mock_states:
                     state_manager.update_driver_state(state)
                 
-                run_detection()
+                run_detection(clock.now())
                 health_manager.record_successful_position_poll()
                 health_manager.active_session = True
 
@@ -143,12 +151,12 @@ async def poll_positions():
             drivers_data = await openf1_client.get_drivers(session_key)
 
             # Refresh lap data on its own cadence
-            now = asyncio.get_event_loop().time()
-            if laps_fetched_at is None or (now - laps_fetched_at) >= config.POLL_LAPS_INTERVAL_S:
+            loop_now = asyncio.get_event_loop().time()
+            if laps_fetched_at is None or (loop_now - laps_fetched_at) >= config.POLL_LAPS_INTERVAL_S:
                 cached_laps = await openf1_client.get_latest_laps(
                     session_key, count=config.BATTLE_PACE_TREND_WINDOW
                 )
-                laps_fetched_at = now
+                laps_fetched_at = loop_now
                 health_manager.record_successful_lap_poll()
                 logger.debug(f"Refreshed lap data for {len(cached_laps)} drivers")
 
@@ -157,10 +165,12 @@ async def poll_positions():
 
             # Update state manager
             if positions:
+                tick_now = clock.now()
                 state_manager.update_from_openf1_positions(
-                    positions, drivers_info, intervals=intervals, laps=cached_laps
+                    positions, drivers_info, intervals=intervals, laps=cached_laps,
+                    now=tick_now,
                 )
-                run_detection()
+                run_detection(tick_now)
                 health_manager.record_successful_position_poll()
                 logger.debug(
                     f"Updated positions for {len(positions)} drivers "
