@@ -4,6 +4,7 @@ FastAPI application entry point with background tasks for polling OpenF1 API.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+from typing import Dict, Optional
 import asyncio
 import logging
 
@@ -11,9 +12,8 @@ from app.clock import WallClock
 from app.config import config
 from app.health import get_health_status, health_manager
 from app.openf1_client import openf1_client, OpenF1APIError
+from app.pipeline import RacePipeline, TickData
 from app.session import session_manager
-from app.state import state_manager
-from app.battle import battle_detector
 from app.mock_data import mock_data_generator
 
 # Configure logging
@@ -28,28 +28,33 @@ logger = logging.getLogger(__name__)
 position_poll_task = None
 session_poll_task = None
 
-# Live mode reads real time. Replay swaps this for a ReplayClock in Phase 1;
-# everything downstream already takes the instant as an argument.
-clock = WallClock()
+
+def current_pipeline() -> RacePipeline:
+    """
+    The pipeline endpoints read from.
+
+    Phase 1 registers a second one under "replay" and flips
+    app.state.active_pipeline; no request handler changes.
+    """
+    return app.state.pipelines[app.state.active_pipeline]
+
+
+def current_track_status() -> Optional[str]:
+    """Track status as the session reports it. Always None live until B4."""
+    session = session_manager.get_current_session()
+    return session.track_status if session else None
 
 
 def reset_for_new_session(session_key):
-    """
-    Drop everything accumulated for the previous session.
-
-    Driver states, gap history and battle IDs are all scoped to one session.
-    Carried across a session change they produce battles between drivers whose
-    gaps were measured in a different race.
-    """
+    """Drop everything accumulated for the previous session."""
     logger.info(f"New session {session_key} - clearing driver state and battles")
-    state_manager.clear()
-    battle_detector.reset()
+    current_pipeline().reset()
 
 
 async def poll_session_status():
     """Background task to poll for current F1 session."""
     retry_delay = 30.0
-    
+
     while True:
         try:
             # TEST MODE: Use mock session
@@ -60,51 +65,24 @@ async def poll_session_status():
                 health_manager.active_session = True
                 await asyncio.sleep(config.POLL_SESSION_INTERVAL_S)
                 continue
-            
+
             # NORMAL MODE: Real OpenF1 session
             if await session_manager.update_current_session():
                 reset_for_new_session(session_manager.current_session.session_key)
-            
+
             if session_manager.is_session_active():
                 health_manager.active_session = True
                 logger.debug(f"Active session: {session_manager.current_session.session_name}")
             else:
                 health_manager.active_session = False
                 logger.debug("No active session")
-            
+
             await asyncio.sleep(config.POLL_SESSION_INTERVAL_S)
-            
+
         except Exception as e:
             logger.error(f"Session polling error: {e}", exc_info=True)
             health_manager.record_error()
             await asyncio.sleep(retry_delay)
-
-
-def run_detection(now):
-    """
-    Run battle detection over current state and cache the result.
-
-    Called once per data poll. Detection used to run inside GET /battles/top,
-    which meant the stability filter counted HTTP requests: two open tabs
-    matured battles twice as fast and zero clients matured them never.
-
-    `now` is passed in rather than read here so that one poll's state update and
-    its detection share a single instant.
-    """
-    driver_states = state_manager.get_all_current_states()
-    if not driver_states:
-        return
-
-    driver_histories = {
-        driver.driver_number: state_manager.get_history(driver.driver_number)
-        for driver in driver_states
-    }
-
-    session = session_manager.get_current_session()
-    track_status = session.track_status if session else None
-
-    battles = battle_detector.detect(driver_states, driver_histories, track_status, now=now)
-    logger.debug(f"Detection: {len(battles)} battles shown, {battle_detector.tracked_count} tracked")
 
 
 async def poll_positions():
@@ -119,31 +97,31 @@ async def poll_positions():
 
     while True:
         try:
+            pipeline = current_pipeline()
+
             # TEST MODE: Use mock data
             if config.TEST_MODE:
                 logger.info("TEST MODE: Generating mock driver data")
-                mock_states = mock_data_generator.generate_driver_states()
-                
-                # Update state manager with mock data
-                for state in mock_states:
-                    state_manager.update_driver_state(state)
-                
-                run_detection(clock.now())
+                pipeline.ingest(TickData(
+                    states=mock_data_generator.generate_driver_states(),
+                    track_status=current_track_status(),
+                ))
+                pipeline.detect()
                 health_manager.record_successful_position_poll()
                 health_manager.active_session = True
 
                 await asyncio.sleep(config.POLL_POSITIONS_INTERVAL_S)
                 continue
-            
+
             # NORMAL MODE: Real OpenF1 data
             # Only poll if we have an active session
             if not session_manager.is_session_active():
                 await asyncio.sleep(5)
                 continue
-            
+
             session = session_manager.get_current_session()
             session_key = session.session_key
-            
+
             # Get latest positions and driver info. Gaps come from /intervals -
             # /position carries position numbers only.
             positions = await openf1_client.get_latest_positions(session_key)
@@ -165,28 +143,30 @@ async def poll_positions():
 
             # Update state manager
             if positions:
-                tick_now = clock.now()
-                state_manager.update_from_openf1_positions(
-                    positions, drivers_info, intervals=intervals, laps=cached_laps,
-                    now=tick_now,
-                )
-                run_detection(tick_now)
+                pipeline.ingest(TickData(
+                    positions=positions,
+                    intervals=intervals,
+                    drivers_info=drivers_info,
+                    laps=cached_laps,
+                    track_status=current_track_status(),
+                ))
+                pipeline.detect()
                 health_manager.record_successful_position_poll()
                 logger.debug(
                     f"Updated positions for {len(positions)} drivers "
                     f"({len(intervals)} interval rows)"
                 )
-            
+
             # Reset retry delay on success
             retry_delay = config.POLL_POSITIONS_INTERVAL_S
             await asyncio.sleep(config.POLL_POSITIONS_INTERVAL_S)
-            
+
         except OpenF1APIError as e:
             logger.error(f"OpenF1 API error in position polling: {e}")
             health_manager.record_error()
             await asyncio.sleep(retry_delay)
             retry_delay = min(retry_delay * 2, max_retry_delay)
-            
+
         except Exception as e:
             logger.exception(f"Unexpected error in position polling: {e}")
             health_manager.record_error()
@@ -197,13 +177,13 @@ async def poll_positions():
 async def lifespan(app: FastAPI):
     """Manage background tasks lifecycle."""
     global position_poll_task, session_poll_task
-    
+
     logger.info("Starting background polling tasks...")
     session_poll_task = asyncio.create_task(poll_session_status())
     position_poll_task = asyncio.create_task(poll_positions())
-    
+
     yield
-    
+
     logger.info("Shutting down background tasks...")
     if session_poll_task:
         session_poll_task.cancel()
@@ -211,14 +191,14 @@ async def lifespan(app: FastAPI):
             await session_poll_task
         except asyncio.CancelledError:
             pass
-    
+
     if position_poll_task:
         position_poll_task.cancel()
         try:
             await position_poll_task
         except asyncio.CancelledError:
             pass
-    
+
     # Close HTTP client
     await openf1_client.close()
 
@@ -229,6 +209,14 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Named pipelines, registered at import time rather than in lifespan so that a
+# TestClient built without starting lifespan still has one to read.
+_pipelines: Dict[str, RacePipeline] = {
+    "live": RacePipeline(clock=WallClock(), name="live"),
+}
+app.state.pipelines = _pipelines
+app.state.active_pipeline = "live"
 
 # CORS middleware
 app.add_middleware(
@@ -260,7 +248,7 @@ async def health():
 async def get_current_session():
     """Get current active F1 session."""
     session = session_manager.get_current_session()
-    
+
     if session:
         return session.model_dump()
     else:
@@ -274,18 +262,18 @@ async def get_current_session():
 @app.get("/state/latest")
 async def get_latest_state():
     """Get latest state for all drivers."""
-    states = state_manager.get_all_current_states()
-    
+    states = current_pipeline().current_states()
+
     if not states:
         return {
             "drivers": [],
             "count": 0,
             "message": "No driver data available. Waiting for active session."
         }
-    
+
     # Sort by position
     states_sorted = sorted(states, key=lambda s: s.position)
-    
+
     return {
         "drivers": [s.model_dump() for s in states_sorted],
         "count": len(states),
@@ -301,9 +289,10 @@ async def get_top_battles(k: int = 5, min_intensity: str = "WATCH"):
     A pure read of the last detection run. Detection happens in the poll loop,
     so the result does not depend on who is asking or how often.
     """
-    driver_states = state_manager.get_all_current_states()
+    pipeline = current_pipeline()
+    driver_states = pipeline.current_states()
 
-    if battle_detector.detected_at is None:
+    if pipeline.detected_at is None:
         return {
             "battles": [],
             "count": 0,
@@ -312,39 +301,39 @@ async def get_top_battles(k: int = 5, min_intensity: str = "WATCH"):
             "detected_at": None
         }
 
-    all_battles = battle_detector.latest_battles
+    all_battles = pipeline.latest_battles()
 
     # Filter by minimum intensity
     intensity_order = {"HOT": 2, "WATCH": 1, "NONE": 0}
     min_intensity_value = intensity_order.get(min_intensity.upper(), 1)
-    
+
     filtered_battles = [
         b for b in all_battles
         if intensity_order.get(b.intensity, 0) >= min_intensity_value
     ]
-    
+
     # Take top K
     top_battles = filtered_battles[:k]
-    
+
     # Enrich battles with driver names for frontend convenience
     enriched_battles = []
     for battle in top_battles:
         battle_dict = battle.model_dump()
-        
+
         # Add driver names
-        chaser_info = state_manager.get_driver_info(battle.chaser_driver_number)
-        ahead_info = state_manager.get_driver_info(battle.ahead_driver_number)
-        
+        chaser_info = pipeline.driver_info(battle.chaser_driver_number)
+        ahead_info = pipeline.driver_info(battle.ahead_driver_number)
+
         if chaser_info:
             battle_dict["chaser_name"] = chaser_info["full_name"]
             battle_dict["chaser_team"] = chaser_info["team_name"]
-        
+
         if ahead_info:
             battle_dict["ahead_name"] = ahead_info["full_name"]
             battle_dict["ahead_team"] = ahead_info["team_name"]
-        
+
         enriched_battles.append(battle_dict)
-    
+
     return {
         "battles": enriched_battles,
         "count": len(top_battles),
@@ -352,25 +341,25 @@ async def get_top_battles(k: int = 5, min_intensity: str = "WATCH"):
         # Freshness of the underlying F1 data, which is what the client shows as
         # its connection status; detected_at is when this result was computed.
         "updated_at": driver_states[0].updated_at.isoformat() if driver_states else None,
-        "detected_at": battle_detector.detected_at.isoformat()
+        "detected_at": pipeline.detected_at.isoformat()
     }
 
 
 @app.get("/drivers/{driver_number}/trend")
 async def get_driver_trend(driver_number: int, points: int = 10):
     """Get gap trend for specific driver."""
-    history = state_manager.get_history(driver_number)
-    
+    history = current_pipeline().history(driver_number)
+
     if not history:
         return {
             "driver_number": driver_number,
             "trend": [],
             "message": f"No history available for driver {driver_number}"
         }
-    
+
     # Take last N points
     recent_history = history[-points:] if len(history) > points else history
-    
+
     trend_data = [
         {
             "timestamp": state.updated_at.isoformat(),
@@ -380,7 +369,7 @@ async def get_driver_trend(driver_number: int, points: int = 10):
         }
         for state in recent_history
     ]
-    
+
     return {
         "driver_number": driver_number,
         "trend": trend_data,
