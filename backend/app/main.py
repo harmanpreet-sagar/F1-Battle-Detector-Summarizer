@@ -8,7 +8,8 @@ from typing import Dict
 import asyncio
 import logging
 
-from app.clock import WallClock
+from app import demo
+from app.clock import WallClock, utcnow
 from app.config import config
 from app.health import get_health_status, health_manager
 from app.openf1_client import openf1_client
@@ -34,9 +35,16 @@ def current_pipeline() -> RacePipeline:
     """
     The pipeline endpoints read from.
 
-    Phase 1 registers a second one under "replay" and flips
+    Under DEMO_STATELESS there is no background loop to have filled one, so the
+    mock race is replayed up to the current instant and thrown away after the
+    response. Every handler below is unchanged either way - that is the whole
+    reason detection was moved behind a pipeline object.
+
+    Phase 1 registers a second long-running one under "replay" and flips
     app.state.active_pipeline; no request handler changes.
     """
+    if config.DEMO_STATELESS:
+        return demo.build_pipeline(utcnow())
     return app.state.pipelines[app.state.active_pipeline]
 
 
@@ -99,8 +107,20 @@ async def lifespan(app: FastAPI):
     """Manage background tasks lifecycle."""
     global position_poll_task, session_poll_task
 
+    if config.DEMO_STATELESS:
+        # Nothing to start: a serverless host freezes the process between
+        # requests, so a poll loop here would advance a pipeline no handler
+        # reads and bill for the privilege.
+        logger.info(
+            f"Stateless demo mode (DATA_MODE={config.DATA_MODE}); "
+            "no background tasks"
+        )
+        yield
+        await openf1_client.close()
+        return
+
     logger.info(f"Starting background tasks (DATA_MODE={config.DATA_MODE})...")
-    pipeline = current_pipeline()
+    pipeline = app.state.pipelines[app.state.active_pipeline]
     source = build_source(config.DATA_MODE, pipeline.clock, session_manager)
 
     session_poll_task = asyncio.create_task(poll_session_status())
@@ -146,6 +166,9 @@ app.state.active_pipeline = "live"
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.CORS_ORIGINS,
+    # Preview deployments get a new hostname on every push; the exact-origin
+    # list above cannot keep up with them.
+    allow_origin_regex=config.CORS_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -165,12 +188,23 @@ async def root():
 @app.get("/health")
 async def health():
     """Health check endpoint."""
+    if config.DEMO_STATELESS:
+        # There is no poll loop to have recorded a successful poll, and the
+        # default reading of that absence - "cannot connect to OpenF1" - is
+        # wrong here. Data is generated on demand, so it is current by
+        # construction.
+        health_manager.record_successful_position_poll()
+        health_manager.active_session = True
     return get_health_status()
 
 
 @app.get("/session/current")
 async def get_current_session():
     """Get current active F1 session."""
+    if config.DEMO_STATELESS:
+        # No session poll loop either; derive the lap from the clock.
+        return demo.build_session(utcnow()).model_dump()
+
     session = session_manager.get_current_session()
 
     if session:

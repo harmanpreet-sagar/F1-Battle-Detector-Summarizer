@@ -20,6 +20,30 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=False)
 DATA_MODES = ("live", "replay", "mock")
 
 
+def env_flag(name: str, default: bool) -> bool:
+    """Read a boolean environment variable, tolerating the usual spellings."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def resolve_stateless() -> bool:
+    """
+    Whether to serve mock data without a background poll loop.
+
+    A serverless host freezes the process between requests, so the poll loop
+    that normally fills the pipeline never advances and every endpoint reports
+    "no driver data". In stateless mode each request instead replays the last
+    `DEMO_WINDOW_TICKS` ticks of the mock race into a throwaway pipeline, which
+    costs a few milliseconds and needs no process to stay alive.
+
+    Defaults on under Vercel (which sets VERCEL=1) and off everywhere else, so
+    Docker and local runs keep the long-running loop they already had.
+    """
+    return env_flag("DEMO_STATELESS", default=bool(os.getenv("VERCEL")))
+
+
 def resolve_data_mode() -> str:
     """
     Where driver data comes from: live | replay | mock.
@@ -60,6 +84,14 @@ class Config:
 
     # Where driver data comes from
     DATA_MODE: str = resolve_data_mode()
+
+    # Serve mock data per-request instead of from a background loop. See
+    # resolve_stateless() - this is what makes serverless hosting work at all.
+    DEMO_STATELESS: bool = resolve_stateless()
+    # Ticks of mock race replayed per request. Must comfortably exceed
+    # BATTLE_GAP_TREND_WINDOW * 3 (gaps refresh every third tick) or no battle
+    # ever accumulates enough distinct samples to clear the stability filter.
+    DEMO_WINDOW_TICKS: int = int(os.getenv("DEMO_WINDOW_TICKS", "48"))
 
     # OpenF1 API
     OPENF1_BASE_URL: str = os.getenv("OPENF1_BASE_URL", "https://api.openf1.org/v1")
@@ -106,6 +138,10 @@ class Config:
         "CORS_ORIGINS",
         "http://localhost:3000,http://localhost:3001"
     ).split(",")
+    # Preview deployments get a fresh hostname every push, so an exact-origin
+    # list cannot cover them. Set to e.g. https://.*\.vercel\.app in hosted
+    # environments; unset locally, where CORS_ORIGINS is enough.
+    CORS_ORIGIN_REGEX: Optional[str] = os.getenv("CORS_ORIGIN_REGEX") or None
 
     # Storage (optional)
     SQLITE_DB_PATH: str = os.getenv("SQLITE_DB_PATH", "./data/f1_sessions.db")
