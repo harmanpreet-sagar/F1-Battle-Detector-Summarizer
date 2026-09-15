@@ -229,7 +229,7 @@ serves them over REST; the frontend renders them live.
 - ✅ OpenF1 polling loops (positions, intervals, laps, session)
 - ✅ Frontend dashboard with live refresh
 - ✅ Docker setup and CI
-- ✅ 59 backend tests
+- ✅ 62 backend tests
 
 Known limits:
 
