@@ -36,7 +36,12 @@ class OpenF1Client:
         self.base_url = config.OPENF1_BASE_URL
         self.timeout = config.OPENF1_TIMEOUT_S
         self.max_retries = config.OPENF1_MAX_RETRIES
-        self.client = httpx.AsyncClient(timeout=self.timeout)
+        # Live data needs OpenF1's paid Sponsor tier. Historical data is free
+        # and unauthenticated, so the header is simply absent without a token.
+        headers = {}
+        if config.OPENF1_API_TOKEN:
+            headers["Authorization"] = f"Bearer {config.OPENF1_API_TOKEN}"
+        self.client = httpx.AsyncClient(timeout=self.timeout, headers=headers)
     
     async def _request(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> List[Dict]:
         """Make a request to OpenF1 API with retry logic."""

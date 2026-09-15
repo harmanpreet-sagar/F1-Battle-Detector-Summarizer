@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/api/index" }
+  ],
+  "env": {
+    "DATA_MODE": "mock",
+    "DEMO_STATELESS": "true",
+    "CORS_ORIGIN_REGEX": "https://[A-Za-z0-9-]+\\.vercel\\.app"
+  }
+}

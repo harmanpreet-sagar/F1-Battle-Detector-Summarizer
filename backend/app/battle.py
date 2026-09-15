@@ -189,7 +189,9 @@ class BattleDetector:
         self,
         driver_states: List[DriverState],
         driver_histories: Dict[int, List[DriverState]],
-        track_status: Optional[str] = None
+        track_status: Optional[str] = None,
+        *,
+        now: datetime,
     ) -> List[Battle]:
         """
         Detect battles between adjacent drivers and cache the result.
@@ -198,20 +200,27 @@ class BattleDetector:
             driver_states: Current state of all drivers
             driver_histories: Historical states for calculating trends
             track_status: Current track status (green, yellow, sc, vsc, etc.)
+            now: Current time in the data's own frame - wall time when live,
+                race time under replay. Keyword-only and required: first_seen,
+                last_seen and eviction are all measured against it, and a wall
+                clock default would make the 30s eviction window mean 300 race
+                seconds at 10x speed and never fire at all in a batch run that
+                processes thousands of ticks in a few wall seconds.
 
         Returns:
             List of Battle objects sorted by score (highest first).
         """
-        battles = self._detect(driver_states, driver_histories, track_status)
+        battles = self._detect(driver_states, driver_histories, track_status, now)
         self._latest = battles
-        self._detected_at = datetime.now()
+        self._detected_at = now
         return list(battles)
 
     def _detect(
         self,
         driver_states: List[DriverState],
         driver_histories: Dict[int, List[DriverState]],
-        track_status: Optional[str]
+        track_status: Optional[str],
+        now: datetime,
     ) -> List[Battle]:
         if not driver_states:
             logger.warning("detect: No driver states provided")
@@ -223,7 +232,7 @@ class BattleDetector:
         sorted_drivers = sorted(driver_states, key=lambda d: d.position)
 
         battles = []
-        current_time = datetime.now()
+        current_time = now
 
         # 2. Check adjacent pairs (P2 chasing P1, P3 chasing P2, etc.)
         for i in range(len(sorted_drivers) - 1):

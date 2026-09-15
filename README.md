@@ -10,7 +10,7 @@ Real-time Formula 1 battle detection and tracking system. A live race companion 
 - 📊 Gap trend sparklines
 - 📱 Mobile-first responsive design
 - 🔴 Live connection status indicator
-- 🧪 `TEST_MODE` for developing without a live session
+- 🧪 `DATA_MODE=mock` for developing without a live session
 
 ## Architecture
 
@@ -106,8 +106,11 @@ F1-Battle-Detector-Summarizer/
 │   │   ├── battle.py         # Battle detection and scoring
 │   │   ├── session.py        # Session lifecycle
 │   │   ├── health.py         # Health monitoring
-│   │   ├── mock_data.py      # TEST_MODE data generator
+│   │   ├── mock_data.py      # DATA_MODE=mock data generator
+│   │   ├── demo.py           # Mock mode without a poll loop (serverless)
 │   │   └── config.py         # Configuration
+│   ├── api/index.py          # Vercel entrypoint (ASGI)
+│   ├── vercel.json
 │   ├── tests/                # Unit and integration tests
 │   ├── requirements.txt
 │   ├── requirements-dev.txt
@@ -122,6 +125,7 @@ F1-Battle-Detector-Summarizer/
 │   ├── package.json
 │   └── Dockerfile
 ├── docker-compose.yml
+├── docs/DEPLOY-VERCEL.md     # Deploying both halves to Vercel
 ├── PLAN.md                   # Detailed implementation plan
 └── README.md
 ```
@@ -165,15 +169,26 @@ npm run build
 (`npm test` is declared in `package.json` but points at a jest that is not
 installed.)
 
-## Deployment (FREE Options)
+## Deployment
 
-See [PLAN.md](./PLAN.md) for detailed deployment instructions.
+### Vercel (both halves, mock data on repeat)
 
-**Recommended Stack:**
+Two Vercel projects from this repo - `backend/` and `frontend/` - running the
+scripted 24-lap mock race on a six-minute loop. No OpenF1 token, no always-on
+process, $0/month. Step by step in
+[docs/DEPLOY-VERCEL.md](./docs/DEPLOY-VERCEL.md).
 
-- Backend: [Render.com](https://render.com) (750 hours/month free)
-- Frontend: [Vercel](https://vercel.com) (unlimited hobby projects)
-- Total cost: **$0/month**
+The one thing to know: Vercel freezes the process between requests, so the
+background poll loop that normally fills the pipeline never advances there.
+`DEMO_STATELESS=true` (set automatically under Vercel) makes each request
+rebuild the last 48 ticks of the race into a throwaway pipeline instead - same
+detection code, ~20ms, no process to keep alive. See `backend/app/demo.py`.
+
+### Live data
+
+`DATA_MODE=live` needs a process that stays alive to poll, which serverless is
+not. Use the `docker-compose.yml` here, or a container host such as
+[Render](https://render.com), with Vercel serving the frontend against it.
 
 ## Configuration
 
@@ -185,10 +200,21 @@ Key environment variables (see `.env.example` files):
 - `POLL_POSITIONS_INTERVAL_S` - Position polling frequency (default: 1.5s)
 - `BATTLE_WATCH_SCORE` - Threshold for "WATCH" battles (default: 0.55)
 - `BATTLE_HOT_SCORE` - Threshold for "HOT" battles (default: 0.70)
-- `TEST_MODE` - Serve generated mock data instead of calling OpenF1 (default: false)
+- `DATA_MODE` - Where driver data comes from: `live`, `replay` or `mock` (default: `mock`)
+  - `mock` - generated data, never touches the network. What CI runs.
+  - `live` - OpenF1 live timing; needs `OPENF1_API_TOKEN` (paid Sponsor tier)
+  - `replay` - a cached historical race (Phase 1, not yet implemented)
+- `OPENF1_API_TOKEN` - Sponsor-tier token, required only for `DATA_MODE=live`
+- `TEST_MODE` - Deprecated alias for `DATA_MODE`. Honoured only when `DATA_MODE`
+  is unset (`true` maps to `mock`, `false` to `live`) and warns at startup.
+- `DEMO_STATELESS` - Serve mock data per request instead of from a background
+  poll loop. Defaults on when `VERCEL` is set, off everywhere else.
+- `DEMO_WINDOW_TICKS` - Ticks of mock race replayed per request (default: 48)
+- `CORS_ORIGIN_REGEX` - Origin pattern to allow alongside `CORS_ORIGINS`, for
+  preview deployments whose hostname changes on every push
 
 `backend/.env` is read on startup. Real environment variables take precedence,
-so `TEST_MODE=true uvicorn app.main:app` overrides the file.
+so `DATA_MODE=mock uvicorn app.main:app` overrides the file.
 
 **Frontend:**
 

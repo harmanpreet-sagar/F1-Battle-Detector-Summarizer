@@ -1,0 +1,10 @@
+# Nothing here is imported by api/index.py, and every megabyte is cold-start time.
+tests/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+Dockerfile
+.dockerignore
+requirements-dev.txt
+data/

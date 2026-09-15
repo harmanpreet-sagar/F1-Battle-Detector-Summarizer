@@ -5,6 +5,7 @@ from datetime import datetime
 from collections import deque
 import time
 
+from app.clock import utcnow
 from app.models import HealthStatus
 
 
@@ -20,12 +21,12 @@ class HealthManager:
     
     def record_successful_position_poll(self):
         """Record a successful position poll."""
-        self.last_successful_poll_positions = datetime.now()
+        self.last_successful_poll_positions = utcnow()
         self.openf1_connected = True
     
     def record_successful_lap_poll(self):
         """Record a successful lap poll."""
-        self.last_successful_poll_laps = datetime.now()
+        self.last_successful_poll_laps = utcnow()
         self.openf1_connected = True
     
     def record_error(self):
@@ -42,7 +43,7 @@ class HealthManager:
     def get_data_delay(self) -> float:
         """Calculate data delay in seconds."""
         if self.last_successful_poll_positions:
-            return (datetime.now() - self.last_successful_poll_positions).total_seconds()
+            return (utcnow() - self.last_successful_poll_positions).total_seconds()
         return 0.0
     
     def get_status(self) -> HealthStatus:
@@ -83,5 +84,5 @@ health_manager = HealthManager()
 def get_health_status() -> dict:
     """Get health status as dict for API endpoint."""
     health_data = health_manager.get_status().model_dump()
-    health_data["timestamp"] = datetime.now().isoformat()
+    health_data["timestamp"] = utcnow().isoformat()
     return health_data

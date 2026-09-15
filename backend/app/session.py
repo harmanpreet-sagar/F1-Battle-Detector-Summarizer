@@ -5,6 +5,7 @@ from typing import Optional
 from datetime import datetime
 import logging
 
+from app.clock import utcnow
 from app.models import SessionStatus
 from app.openf1_client import openf1_client
 
@@ -56,7 +57,7 @@ class SessionManager:
                     total_laps=None,  # Not always available in session endpoint
                     track_status=None,  # Will be inferred from live data or session status
                     gmt_offset=session_data.get("gmt_offset", "+00:00"),
-                    updated_at=datetime.now()
+                    updated_at=utcnow()
                 )
                 changed = self.set_session(session)
                 logger.info(
