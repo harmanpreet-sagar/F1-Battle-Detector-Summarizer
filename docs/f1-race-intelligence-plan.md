@@ -28,7 +28,7 @@ Repo: [`harmanpreet-sagar/F1-Battle-Detector-Summarizer`](https://github.com/har
 ## 1. Why the pivot
 
 | Fact | Consequence |
-|---|---|
+| --- | --- |
 | OpenF1 **live** data needs the paid Sponsor tier (€9.90/month). Data counts as live "from 30 minutes before a session starts until 30 minutes after it ends." | The project as originally designed can't run publicly for free. |
 | OpenF1 **historical** data is free, needs no key, and covers every session since 2023. | Every race since 2023 is available, and each new race becomes free about 30 minutes after it ends. |
 | Races only run for a few hours on race weekends. | A live-only demo shows nothing most of the time someone opens it. Live mode was a weak demo even before the paywall. |
@@ -43,12 +43,12 @@ Repo: [`harmanpreet-sagar/F1-Battle-Detector-Summarizer`](https://github.com/har
 ## 2. Decisions already made
 
 | Question | Decision |
-|---|---|
-| When to publish | **As soon as Phase 1 (replay) works.** Publish from Replit, then keep the live app updated as Phases 2–3 land. |
-| How much happens in Replit | **Feature work happens in GitHub; deployment and the platform-shaped design work happen in the Replit workspace.** The Replit App is connected to this repo, so it isn't a copy — it's a checkout with a run configuration. The sleep-proof broadcast schedule (1.4) and single-app packaging (1.7) exist *because* of free-tier limits, so they get written and debugged there and merged back by PR. |
+| --- | --- |
+| When to publish | **As soon as Phase 1 (replay) works.** Deploy to Vercel, then keep the live app updated as Phases 2–3 land — every push to `main` redeploys. |
+| Where it's hosted | **Vercel, free Hobby plan, two projects from this one repo** — `backend/` as Python functions, `frontend/` as the Next.js app. That's the arrangement `docs/DEPLOY-VERCEL.md` already sets up for the mock demo, so Phase 1 extends a deployment that works rather than starting one. The consequence that shapes the design: a serverless function is frozen the moment it responds, so there is no long-running poll loop and no state between requests. The broadcast replay is rebuilt per request (1.4). |
 | Report text | **Template first, LLM later.** Deterministic, testable text now; LLM narrative as an optional layer with the template as fallback. |
 | Where reports go | **In the web app** (a Reports page) **and as Markdown in the repo** (one file per race, committed automatically). |
-| Budget | $0. Replit Starter (free) plan, OpenF1 free tier, GitHub Actions free minutes. |
+| Budget | $0. Vercel Hobby (free, non-commercial) plan, OpenF1 free tier, GitHub Actions free minutes. |
 
 ---
 
@@ -57,7 +57,7 @@ Repo: [`harmanpreet-sagar/F1-Battle-Detector-Summarizer`](https://github.com/har
 ### 3.1 Three features on one engine
 
 | Feature | What a user sees | What it proves technically |
-|---|---|---|
+| --- | --- | --- |
 | **Race Replay** | Pick a race (or land on the one playing now), watch battles appear and resolve at 1–20x speed, lap counter, safety car banner. | The detector works on real data. The same pipeline serves live and replay. Time is injected, not read from the wall clock. |
 | **Post-race Battle Reports** | After every 2026 Grand Prix: top battles of the race, how each ended, gap charts, race-level stats. | Batch processing, event segmentation, outcome labelling, scheduled automation. |
 | **Overtake Prediction** | "Pass chance in the next 3 laps: 38%" on battle cards; "biggest upset" in reports. | Dataset building, leakage-safe splits, baselines, calibration, model serving behind a flag. |
@@ -105,7 +105,7 @@ flowchart LR
 **Blocks replay** (found by reading the code; each has a task below):
 
 | # | Problem | Where | Why it breaks replay |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | B1 | Data confidence is computed as *row age vs `datetime.now()`* | `state.py:115-116`, `state.py:132` | A 2025 row is ~a year old, so every driver is `low` confidence. That sets `data_quality_warning`, multiplies every score by 0.7 and flags every battle. |
 | B2 | Detector timekeeping uses `datetime.now()` | `battle.py:207`, `battle.py:226` | `first_seen`, `last_seen` and the 30s eviction run on wall time. At 10x speed an unseen battle survives 300 race-seconds instead of 30; in fast batch mode (thousands of ticks in a few wall-seconds) nothing is ever evicted. |
 | B3 | Pipeline lives inside `main.py` poll loops with module-level singletons | `main.py`: `run_detection()`, `poll_positions()`, `poll_session_status()` | Can't run a replay, a batch analysis and the API side by side. They'd share one `state_manager` and `battle_detector`. |
@@ -134,6 +134,7 @@ flowchart LR
 - Make all internal datetimes timezone-aware UTC. `battle.py`, `session.py` and `mock_data.py` use naive `datetime.now()`, while OpenF1 timestamps are timezone-aware. Once race time is injected, comparing the two raises `TypeError`.
 
 **Tests:**
+
 - An eviction test driven by a fake clock: a battle unseen for 31 race-seconds is evicted regardless of wall time.
 - A row timestamped 2025 with `now` = the same 2025 instant gets `high` confidence.
 
@@ -176,16 +177,18 @@ class DataSource(Protocol):
 - `.env.example` and README updated.
 
 **Acceptance for Phase 0:**
+
 - [ ] All 62 existing tests pass unchanged (or with `now` threaded through fixtures).
 - [ ] No `datetime.now()` left in `state.py` or `battle.py`.
 - [ ] `DATA_MODE=mock` behaves exactly like `TEST_MODE=true` did.
 - [ ] New clock tests pass.
 
 ---
+
 ## Phase 1 — Race Replay
 
-> **Goal:** a public `replit.app` URL showing a real race replaying through the detector.
-> **Where:** GitHub for 1.1–1.3, 1.5, 1.6 and 1.8; the Replit workspace (free Starter plan) for 1.4, 1.7 and publishing. **Rough size:** 15–25 focused hours.
+> **Goal:** a public `vercel.app` URL showing a real race replaying through the detector.
+> **Where:** GitHub for all of it; Vercel preview deployments are where 1.4 and 1.7 are actually proved (see 1.9). **Rough size:** 15–25 focused hours.
 > **Exit:** the demo is live and linked from the README.
 
 ### 1.1 Race ingest and cache
@@ -195,7 +198,7 @@ Command: `python -m app.ingest --year 2025 --round 14` or `--session-key <key>`
 **Fetch** (per race session, one request per endpoint, sequential):
 
 | Endpoint | Used for |
-|---|---|
+| --- | --- |
 | `sessions` | session metadata, `date_start`/`date_end`, circuit |
 | `drivers` | names, teams, acronyms (and team colours if present) |
 | `position` | running order over time |
@@ -213,6 +216,7 @@ Command: `python -m app.ingest --year 2025 --round 14` or `--session-key <key>`
 **Storage:** `data/sessions/{session_key}/{endpoint}.json.gz` plus a `manifest.json` containing `session_key`, `year`, `round`, `circuit`, `fetched_at`, row count per endpoint, a content hash per endpoint and `schema_version`.
 
 **Rules:**
+
 - Refuse to fetch a session whose `date_end` is less than **45 minutes** ago. The live window ends at +30 min; the extra 15 is a buffer. This keeps us inside the free tier by construction.
 - Sequential requests, a short pause between them, retry with exponential backoff, a descriptive `User-Agent`. OpenF1 doesn't document free-tier rate limits, so be polite and fetch each race **once**.
 - Idempotent: if the manifest exists and its hashes match, skip.
@@ -224,7 +228,7 @@ Command: `python -m app.ingest --year 2025 --round 14` or `--session-key <key>`
 `app/replay/timeline.py` merges the cached endpoints into one time-ordered stream:
 
 | Event | Timestamp used |
-|---|---|
+| --- | --- |
 | `PositionEvent` | `position.date` |
 | `IntervalEvent` | `intervals.date` |
 | `LapCompletedEvent` | `laps.date_start + lap_duration` (fixes B6). A lap only exists for the pipeline once it's finished. |
@@ -233,6 +237,7 @@ Command: `python -m app.ingest --year 2025 --round 14` or `--session-key <key>`
 | `PitEvent` | `pit.date` |
 
 **Edge cases to handle, each with a test:**
+
 - Laps with a null `lap_duration` (in-progress, pit laps, some lap 1s): no `LapCompletedEvent`.
 - Laps with a null `date_start`: fall back to the previous lap's end, else skip.
 - `interval` / `gap_to_leader` as `"+1 LAP"` strings: already parsed to `None` by `parse_gap()`. Keep that.
@@ -244,25 +249,27 @@ Command: `python -m app.ingest --year 2025 --round 14` or `--session-key <key>`
 ### 1.3 `ReplaySource` and `ReplayClock`
 
 - **Tick size = the live poll interval (1.5 race-seconds).** Each tick hands the pipeline the *latest row per driver as of race time t*, which is exactly what `get_latest_positions()` / `get_latest_intervals()` would have returned if polled live at t. Same tick size means the stability filter (`BATTLE_MIN_DURATION_UPDATES`) and eviction behave the same as live.
-- **Speed:** `REPLAY_SPEED` of 1, 5, 10 or 20. Wall sleep per tick = `1.5 / speed`.
+- **Speed:** `REPLAY_SPEED` of 1, 5, 10 or 20. On the container path the runner sleeps `1.5 / speed` between ticks; on the deployed path nothing sleeps — the speed only decides where the clock points, and the ticks are replayed as fast as they read (1.4).
 - **Fast mode** (speed = ∞, no sleeping) is used by seek and by the Phase 2 batch analyzer.
 - **Seek:** to jump to race time T, reset the pipeline and run fast mode from the race start to T. Twenty drivers and a few thousand ticks should take well under a second. **Measure it.** If it's slow, checkpoint pipeline state every 5 laps.
 - **Playlist:** `REPLAY_PLAYLIST=9xxx,9yyy,...` (session keys). Loops forever.
 
 **The "live-equivalence" test.** This is the strongest engineering claim in the project, so test it directly:
+
 - Take a trimmed real race excerpt (fixture, ~10 laps).
 - Path A: serve the rows through a fake HTTP layer to `LiveSource`, advancing a fake clock as if polling live.
 - Path B: run the same rows through `ReplaySource`.
 - Assert that the battles detected at every tick are identical.
 
-### 1.4 Broadcast replay: one shared stream, stateless schedule
+### 1.4 Broadcast replay: one shared stream, rebuilt per request
 
-On a free Replit app with an unknown number of viewers, **one server-side replay that everyone watches** (like a TV channel) is the right v1:
-- One pipeline, constant memory, regardless of viewers.
+With an unknown number of viewers, **one server-side replay that everyone watches** (like a TV channel) is the right v1:
+
+- Constant work per request regardless of viewers, and no per-viewer state to keep.
 - The existing `/battles/top` dashboard works almost unchanged.
 - Viewers can't fight over speed or race selection, because there are no public controls in v1.
 
-**Surviving Replit's sleep:** free apps sleep after inactivity, and the replay can't just pause and resume. Make the schedule a pure function of wall-clock time:
+**Why it has to be stateless:** on Vercel there is no process that keeps the replay running between requests — the function is frozen the moment it responds. `backend/app/demo.py` already solves this for mock mode, and Phase 1 generalises the same trick to replay. Make the schedule a pure function of wall-clock time:
 
 ```
 playlist_duration = sum(race_durations) / REPLAY_SPEED
@@ -270,11 +277,17 @@ offset            = (wall_now - REPLAY_EPOCH) mod playlist_duration
 → (race, race_time) = locate(offset)
 ```
 
-On boot or wake, compute where the broadcast *should* be, seek there in fast mode, then continue in real time. Every visitor sees the same moment. After a cold start it looks as if the replay kept running.
+Each request then locates `(race, race_time)` from the clock, replays the preceding `REPLAY_WINDOW_TICKS` ticks (default 48, as in `demo.py`) of that race into a throwaway `RacePipeline` on a `ReplayClock`, and serves what falls out. Detection, the stability filter, closing rate and eviction all run exactly as they do live — over a window rebuilt a millisecond ago rather than one accumulated over the last minute. Every visitor sees the same moment of the same race, and a cold start is indistinguishable from a warm one.
+
+The window must be at least `BATTLE_GAP_TREND_WINDOW * 3` ticks, or no battle accumulates enough distinct gap samples to be shown at all.
+
+**Cost is per request, not per second.** Mock mode rebuilds 48 ticks in ~20ms; **measure the replay equivalent**, since replay ticks read cached rows instead of generating them. If a rebuild is expensive, serve it with `Cache-Control: s-maxage=<one tick>` so Vercel's edge cache collapses concurrent viewers onto a single rebuild.
+
+The container path (`docker-compose.yml`, `uvicorn`) keeps the long-running loop and accumulates state as it does today. Both paths must produce the same battles — see the equivalence test in 1.8.
 
 ### 1.5 API changes
 
-- Prefix every API route with **`/api`** (e.g. `/api/battles/top`, `/api/health`). This frees `/` for the frontend in single-app packaging (1.7). Update `frontend/app/lib/api-client.ts`.
+- Prefix every API route with **`/api`** (e.g. `/api/battles/top`, `/api/health`). On Vercel the backend is its own project, so this is about having one API surface that still works when FastAPI serves the frontend at `/` on the container path (1.7). Update `frontend/app/lib/api-client.ts`.
 - `GET /api/replay/status` returns `{mode, session_key, meeting_name, circuit, year, race_time, lap, total_laps, track_status, speed, progress_pct, next_race}`.
 - `GET /api/replay/sessions` lists cached races from their manifests.
 - `GET /api/session/current` gets real `current_lap` / `total_laps` (fixes B7). Current lap = max completed lap of the leader + 1; total laps from `session_result.number_of_laps` of the winner.
@@ -290,17 +303,19 @@ On boot or wake, compute where the broadcast *should* be, seek there in fast mod
 - **"Up next"** strip showing the next race in the playlist.
 - **Footer disclaimer:** "Unofficial. Not associated with Formula 1. Data: OpenF1."
 
-### 1.7 Single-app packaging for Replit
+### 1.7 Deployment packaging for Vercel
+
+Two projects from this one repo, as `docs/DEPLOY-VERCEL.md` describes: `backend/` (FastAPI behind `backend/api/index.py`, routed by `backend/vercel.json`) and `frontend/` (Next.js). Vercel's Next builder wants the Next app at the project root and bundles Python functions from the project root too, so one project can't hold both.
 
 | Change | Detail |
-|---|---|
-| Static frontend | `next.config.js`: `output: 'export'` (the app is fully client-side: `page.tsx` is `'use client'`, data via SWR). Keep `standalone` for the Docker path via an env switch. |
-| Same-origin API | `API_BASE_URL` defaults to `''`, so the browser calls `/api/...` on the same host. No CORS needed in production; keep CORS for local dev. |
-| FastAPI serves the UI | After registering `/api` routes, `app.mount("/", StaticFiles(directory="frontend/out", html=True))`. Delete the JSON `GET /` root (or move it to `/api`). |
-| Replit config | `.replit` with Python 3.11 + Node modules, a run command (`uvicorn app.main:app --host 0.0.0.0 --port $PORT`), a build step (`cd frontend && npm ci && npm run build`) and deployment settings. Check the current `.replit` keys against Replit's docs when you write it; they change. |
-| Build memory fallback | `next build` may run out of memory on a free workspace. If it does, a GitHub Action builds `frontend/out` and pushes it to a `replit-dist` branch, and Replit pulls that instead of building. |
-| Replay data | Commit a **curated set of 5–8 races** (compressed) under `data/sessions/` so the app never depends on OpenF1 at runtime. If 1.1 shows the set is too big for comfort (target < 50 MB), trim the fields stored. |
-| Docker / compose | Keep working for local dev: compose sets `DATA_MODE`, and the frontend dev server proxies `/api` to the backend. |
+| --- | --- |
+| Replay data | Commit a **curated set of 5–8 races** (compressed) under `data/sessions/` so the app never depends on OpenF1 at runtime. It ships *inside* the backend function, so the serverless bundle limit (250 MB uncompressed on Hobby at the time of writing — check it) is the hard ceiling, and Python dependencies count against it. Target **< 50 MB** of race data; if 1.1 says that's tight, trim stored fields or cut the playlist. |
+| Cold starts | A cold function pays import time plus one rebuild. Keep module import cheap: load a race's cached rows lazily and memoise them per instance, so a warm instance answers later requests from memory. |
+| Function duration | A rebuild must fit comfortably inside the Hobby execution limit. The bounded window (1.4) is what keeps it there — never seek from the race start on a request path. |
+| Frontend env | `NEXT_PUBLIC_API_BASE_URL` is inlined at build time, so it must be set for **production and preview** before the build. |
+| CORS | Lives in `backend/vercel.json`. The existing `*.vercel.app` origin regex is what makes preview deployments work without re-listing hostnames. |
+| Container path | `next.config.js` keeps `output: 'export'` available, and FastAPI mounts `frontend/out` at `/` after registering `/api` routes, so the Docker image stays a single same-origin app. Compose sets `DATA_MODE`; the dev server proxies `/api` to the backend. |
+| Push-to-deploy | Both projects import this repo with different Root Directories, so `main` redeploys on push and every PR gets a preview URL. |
 
 ### 1.8 Tests (network-free, CI stays green on race weekends)
 
@@ -310,39 +325,42 @@ On boot or wake, compute where the broadcast *should* be, seek there in fast mod
 - Track status: **no HOT or WATCH battles while `sc`/`vsc` is active**, and battles recover after the restart.
 - Live-equivalence test (1.3).
 - Schedule: `locate(offset)` wraps correctly across playlist boundaries.
-- API: `/api/replay/status` shape; static files served at `/`; `/api/*` still wins over static.
+- **Stateless equivalence:** a pipeline rebuilt from the last `REPLAY_WINDOW_TICKS` ticks at race time t reports the same battles as one that has run continuously from the race start to t — the replay sibling of `tests/test_demo.py`. Where it can't match exactly (a battle older than the window), assert the difference is bounded and write down what it is.
+- API: `/api/replay/status` shape; on the container path, static files served at `/` with `/api/*` still winning over static.
 
-### 1.9 Splitting the work between GitHub and Replit
+### 1.9 Where the platform-shaped work gets proved
 
-The two environments are the same repo, so the split is about *where a problem is cheapest to solve*, not about where the code lives.
+All the work happens in GitHub with the normal PR workflow — there's no second workspace. What varies is *where you find out whether something works*.
 
-| Work | Where | Why |
-|---|---|---|
-| 1.1–1.3 ingest, timeline, replay engine; 1.5 API; 1.6 frontend; 1.8 tests | GitHub, normal editor + PRs | Pure logic. Nothing about it is platform-specific, and the local test loop is faster. |
-| 1.4 broadcast schedule | **Replit workspace** | The stateless schedule exists to survive the free tier's sleep. You can only tell whether it works by letting a real app sleep and wake. |
-| 1.7 single-app packaging, `.replit`, build fallback | **Replit workspace** | Config keys, `$PORT` binding, build memory and static mounting are all properties of the platform. Guessing at them locally and pushing to see what breaks is the slow way round. |
-| Publishing, secrets, the deployed app | **Replit workspace** | It's the deploy target. |
+| Work | Proved | Why |
+| --- | --- | --- |
+| 1.1–1.3 ingest, timeline, replay engine; 1.5 API; 1.6 frontend; 1.8 tests | Locally + CI | Pure logic. Nothing about it is platform-specific, and the local test loop is faster. |
+| 1.4 stateless broadcast | By test locally, **then on a preview deployment** | The equivalence test proves the rebuild matches a continuous run. Only a deployment shows the real per-request cost and cold-start behaviour. |
+| 1.7 bundle size, cold starts, function duration | **Preview deployment** | Bundle limits, import time and execution limits are properties of the platform, and guessing at them locally is the slow way round. |
+| Env vars, CORS, the production URL | **Vercel project settings** | It's the deploy target. |
 
-- Connect the repo to a Replit App early — before 1.4 — so packaging problems surface while there's still time to design around them, rather than at the end.
-- Commit Replit-side work from the workspace on a `feature/replay-packaging` branch and merge it by PR, same as any other branch.
-- Keep a short `docs/replit-build-log.md`: what was built in the workspace, problems hit (memory, sleep, build, config), how each was solved. Future-you will need it the next time the free tier shifts.
-- Take 3–4 screenshots and a 30–60s screen recording (GIF or video) of the replay. These go in the README and keep the project presentable if the free published link expires (see §10).
+- Deploy the mock demo first — it already works (`docs/DEPLOY-VERCEL.md`) — so the two projects, env vars and CORS are settled before replay data starts growing the bundle.
+- Open the replay PR early enough that its preview deployment surfaces packaging problems while there's still time to design around them, rather than at the end.
+- Keep `docs/DEPLOY-VERCEL.md` current as the deployment log: what broke (bundle size, cold starts, build, env vars), how each was solved. Future-you will need it the next time the free tier shifts.
+- Take 3–4 screenshots and a 30–60s screen recording (GIF or video) of the replay. These go in the README and keep the project presentable wherever the link is read (see §10).
 
 ### 1.10 Minimum shippable cut (if time runs short before publishing)
 
 Must ship: 0.1–0.3, 1.1, 1.2, 1.3 (without seek optimisation), 1.4 with a **single race looping**, track status from race control, 1.5 prefix + status endpoint, 1.6 header + badge + SC banner, 1.7.
 
-Can slip until after publishing: playlist of multiple races, stateless schedule (a restart from lap 1 on wake is acceptable), tyre info on cards, "up next", live-equivalence test (write it right after).
+Can slip until after publishing: playlist of multiple races (one race looping is fine — but the per-request rebuild itself can't slip, since nothing shows without it), tyre info on cards, "up next", live-equivalence test (write it right after).
 
 **Acceptance for Phase 1:**
-- [ ] Public `replit.app` URL shows a real race replay with battles on screen within ~30s of a cold start.
+
+- [ ] Public `vercel.app` URL shows a real race replay with battles on screen on first load, cold function included.
 - [ ] No battles shown during SC/VSC periods in the chosen race(s).
 - [ ] Lap counter and race name correct; honesty badge and disclaimer visible.
 - [ ] CI green; new tests added; `DATA_MODE=mock` still works.
 - [ ] README has a demo link, screenshots/GIF and a "How replay works" section.
-- [ ] Demo link verified in a private browser window and after a cold start.
+- [ ] Demo link verified in a private browser window, and again after the function has gone cold.
 
 ---
+
 ## Phase 2 — Post-race Battle Reports
 
 > **Goal:** after every 2026 Grand Prix, a ranked battle report appears in the app and in the repo with no manual step. The 2023–2025 back catalogue is filled in too.
@@ -361,6 +379,7 @@ Command: `python -m app.analyze --session-key <key>`
 A battle as a human understands it spans many ticks, and **the drivers swap roles when the pass happens**. The detector's `battle_id` (`{chaser}_{ahead}`) flips at exactly the moment we care about most.
 
 **Segmentation rules** (`app/reports/episodes.py`):
+
 - Episode key = the **unordered** driver pair `{a, b}`.
 - Start: first tick the pair reaches WATCH or HOT.
 - Continue while the pair is adjacent and gap ≤ `EPISODE_MAX_GAP_S` (default 2.0s), allowing breaks of up to `EPISODE_MERGE_S` (default 1 lap) for interval-feed noise.
@@ -391,7 +410,7 @@ A battle as a human understands it spans many ticks, and **the drivers swap role
 ### 2.3 Outcome labelling
 
 | Outcome | Rule |
-|---|---|
+| --- | --- |
 | `PASS` | The attacker is ahead at episode end (from `position`) and stayed ahead for ≥ 2 laps, and the swap wasn't caused by a pit stop. |
 | `PASS_AND_REPASS` | The order swapped and then swapped back inside the episode. |
 | `HELD` | The defender was still ahead when the episode ended on gap/race end. |
@@ -400,6 +419,7 @@ A battle as a human understands it spans many ticks, and **the drivers swap role
 | `ENDED_BY_DNF` | Either car retired. |
 
 **Pass evidence is cross-checked from two sources:**
+
 - `overtakes` rows between the two drivers inside the episode window (OpenF1 says this endpoint "may be incomplete").
 - `position` order changes between the two drivers, **excluding** swaps where either car was in the pit lane that lap, and swaps involving a lapped car.
 - `label_source` = `overtakes` | `position` | `both`. **Report the agreement rate** between the two sources per season. That's a label-quality number to quote, and the input for deciding which source Phase 3 trusts.
@@ -409,7 +429,7 @@ A battle as a human understands it spans many ticks, and **the drivers swap role
 `battle_rank_score` is a documented formula with weights in config and every term unit-tested:
 
 | Term | Intuition | Default weight |
-|---|---|---|
+| --- | --- | --- |
 | Duration (laps, capped at 15) | Long fights are better stories | 0.25 |
 | Closeness (share of time within 1.0s) | Close means real threat | 0.25 |
 | Peak intensity (max detector score) | Uses the existing engine | 0.15 |
@@ -433,6 +453,7 @@ Tune the weights once by eye on 3–4 races you watched, then **freeze them** an
 5. **Method note:** a link to how detection, episodes and outcomes work, and known limitations.
 
 **Template rules:**
+
 - Every sentence is assembled from episode fields. There's no free text, so there's nothing to hallucinate.
 - A small phrase bank per situation (closing, holding, undercut, tyre offset, SC restart) with deterministic selection (hash of episode id), so reports don't all read the same while staying reproducible.
 - Snapshot tests: fixture episode → exact expected sentences.
@@ -442,10 +463,11 @@ Tune the weights once by eye on 3–4 races you watched, then **freeze them** an
 **Markdown in repo:** `reports/2026/15-italian-gp.md`, plus `reports/README.md` as a season index table, regenerated on every run.
 
 **Web app:**
+
 - `reports/index.json` (season → races → headline) and one JSON file per race.
 - New pages: **Reports index** (season tabs, race cards with the #1 battle headline) and **Report view** (`/reports/?race=2026-15`).
   - Use a query parameter rather than dynamic routes so `output: 'export'` never needs a rebuild when a report is added.
-- **Getting new reports into a published Replit app without redeploying:** the backend serves `/api/reports/*` by fetching the JSON from the repo's raw GitHub URL (`REPORTS_SOURCE_URL`), cached for 10 minutes, falling back to the copy bundled at deploy time. A new race's report shows up on the live site as soon as the Action commits it.
+- **Getting new reports onto the deployed app:** the backend serves `/api/reports/*` by fetching the JSON from the repo's raw GitHub URL (`REPORTS_SOURCE_URL`), cached for 10 minutes, falling back to the copy bundled at deploy time. The Action's commit to `main` triggers a redeploy anyway; the fetch matters because it refreshes running instances without waiting for a build, and keeps a growing pile of reports out of the function bundle.
 
 ### 2.7 Automation: GitHub Actions
 
@@ -458,7 +480,7 @@ Tune the weights once by eye on 3–4 races you watched, then **freeze them** an
   3. Compare the new manifest hashes with the previous ones and regenerate only if data changed.
   4. Commit with a bot identity (`reports: 2026 R15 Italian GP`) to `main`. Permissions: `contents: write`.
 - **Separate from CI.** The existing CI stays network-free. This workflow is the only thing that talks to OpenF1.
-- **Raw data** isn't committed for all seasons. Raw caches are uploaded as **Actions artifacts / GitHub Release assets** (`data-2025.tar.gz`). Only derived episodes, laps tables and reports are committed. This keeps the repo small and the Replit workspace under its 2 GB storage limit.
+- **Raw data** isn't committed for all seasons. Raw caches are uploaded as **Actions artifacts / GitHub Release assets** (`data-2025.tar.gz`). Only derived episodes, laps tables and reports are committed. This keeps the repo small and the deployed backend function under Vercel's bundle size limit.
 - **Failure notification:** the workflow fails loudly (red X, email from GitHub) if a race older than 24h still has no report.
 
 **Backfill:** run the dispatch once per season for 2023, 2024, 2025 and 2026-to-date. This produces the historical reports and **the Phase 3 dataset**. Sprint races: include them in the data (flagged `is_sprint`), but reports cover Grands Prix only in v1.
@@ -489,16 +511,18 @@ These numbers go in the README and give Phase 3 its baseline.
 - A dry-run mode for the workflow script against the fixture (no network), run in CI.
 
 **Acceptance for Phase 2:**
+
 - [ ] The next 2026 Grand Prix after merge gets a report in the repo and on the site with no manual action.
 - [ ] Reports exist for all 2025 Grands Prix (and ideally 2023–2024).
 - [ ] Label source agreement rate and detector evaluation metrics (2.8) published in the README.
-- [ ] Reports page live on the Replit app.
+- [ ] Reports page live on the deployed app.
 
 ---
+
 ## Phase 3 — Overtake Prediction
 
 > **Goal:** replace hand-picked weights with a model that predicts whether a battle ends in a pass, beats the heuristic on held-out races, and is honest about its limits.
-> **Where:** GitHub for code; training locally or in Colab (not Replit, because of free-tier RAM). **Rough size:** 30–50 focused hours.
+> **Where:** GitHub for code; training locally or in Colab — never on the deploy target, since a serverless function is the wrong shape for training. **Rough size:** 30–50 focused hours.
 
 ### 3.1 Problem framing
 
@@ -519,7 +543,7 @@ These numbers go in the README and give Phase 3 its baseline.
 ### 3.3 Features (all knowable at the end of lap L)
 
 | Group | Features |
-|---|---|
+| --- | --- |
 | Gap dynamics | gap at lap end; mean and min gap over lap L; gap change over last 1 and 3 laps; closing rate (existing function) |
 | Pace | lap-time delta last 1 / 3 laps (existing `calculate_pace_delta`); per-sector deltas from `duration_sector_1..3` |
 | Straight-line | `st_speed` delta, `i1_speed`/`i2_speed` deltas (speed-trap advantage is a big factor in passing) |
@@ -531,6 +555,7 @@ These numbers go in the README and give Phase 3 its baseline.
 | Heuristic | the existing detector's peak score during lap L, both as a feature and as a standalone baseline |
 
 **Leakage rules (write them as tests):**
+
 - No feature may read any row timestamped after the end of lap L.
 - No `session_result`, no `overtakes`, no final positions.
 - Circuit priors are computed inside each training fold only.
@@ -543,7 +568,7 @@ These numbers go in the README and give Phase 3 its baseline.
 **Evaluation design:**
 
 | Split | Train | Validate | Test | Answers |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | **A: within-era** | 2023–2024 | 2025 first half | 2025 second half | How good is the model under stable rules? |
 | **B: cross-era** | 2023–2025 | (reuse A's settings) | 2026 races to date | How much does it degrade under new rules? |
 | **C: adapted** | 2023–2025 + 2026 first half, with a `season_2026` indicator (or 2026-only fine-tune) | — | 2026 second half | Does a little new-era data recover the drop? |
@@ -555,11 +580,13 @@ These numbers go in the README and give Phase 3 its baseline.
 ### 3.5 Baselines and models
 
 **Baselines** (must be beaten to claim anything):
+
 1. **Base rate:** predict the training positive rate for everyone.
 2. **Heuristic score:** the existing detector score used as a probability-like ranking, plus "HOT ⇒ pass" as a hard classifier.
 3. **Simple rule:** gap < 1.0s **and** attacker faster over last 3 laps.
 
 **Models:**
+
 1. **Logistic regression:** standardised features, class weights, L2. Interpretable coefficients go straight into the README.
 2. **Gradient boosting:** scikit-learn `HistGradientBoostingClassifier` (no extra dependency), early stopping on validation.
 3. **Calibration:** isotonic or Platt on the validation split. The UI shows percentages, so they have to mean something.
@@ -567,7 +594,7 @@ These numbers go in the README and give Phase 3 its baseline.
 ### 3.6 Metrics
 
 | Metric | Why |
-|---|---|
+| --- | --- |
 | **PR-AUC** (primary) | Imbalanced classes. ROC-AUC flatters. |
 | ROC-AUC | Comparable with other work |
 | Precision at recall 0.5, and precision@k per race (top-k battle-laps flagged) | Maps to "if we highlight 5 battles, how many deliver?" |
@@ -594,7 +621,7 @@ ml/
 ```
 
 - **`features.py` is imported by both training and the backend**, so training and serving compute features identically. Add a test that asserts identical feature vectors from the training path and the serving path for the fixture race.
-- **Serving preference:** if logistic regression is within noise of GBM, ship logistic regression as pure-Python coefficients. That means zero new runtime dependencies and a tiny memory footprint on Replit free. Only add scikit-learn to the backend if GBM wins clearly.
+- **Serving preference:** if logistic regression is within noise of GBM, ship logistic regression as pure-Python coefficients. That means zero new runtime dependencies, nothing added to the serverless bundle, and no scikit-learn import on every cold start. Only add scikit-learn to the backend if GBM wins clearly.
 
 ### 3.8 Integration
 
@@ -610,12 +637,14 @@ ml/
 - Run it manually after every few 2026 races. Don't schedule it; retraining should be a decision.
 
 **Acceptance for Phase 3:**
+
 - [ ] Dataset datasheet and leakage tests committed.
 - [ ] Model card with Split A/B/C results, baselines, calibration and bootstrap CIs.
 - [ ] Model served behind `PASS_MODEL` in replay and reports.
 - [ ] README headline numbers filled in with real results, including where it doesn't work.
 
 ---
+
 ## 9. Cross-cutting work
 
 ### 9.1 Repository layout after all phases
@@ -625,9 +654,9 @@ F1-Battle-Detector-Summarizer/
 ├── .github/workflows/
 │   ├── ci.yml                 # unchanged: network-free tests, lint, build (+ static export)
 │   ├── race-reports.yml       # Phase 2: scheduled ingest → analyze → report → commit
-│   ├── replit-dist.yml        # Phase 1 fallback: build frontend/out if Replit OOMs
 │   └── retrain.yml            # Phase 3: manual retrain with promotion gate
-├── .replit                    # Phase 1
+├── backend/vercel.json        # Vercel backend project: routing, env, CORS
+├── backend/api/index.py       # Vercel function entry point (ASGI)
 ├── backend/app/
 │   ├── clock.py               # Phase 0
 │   ├── pipeline.py            # Phase 0
@@ -647,18 +676,20 @@ F1-Battle-Detector-Summarizer/
 └── docs/
     ├── how-replay-works.md
     ├── how-reports-work.md
-    └── replit-build-log.md
+    └── DEPLOY-VERCEL.md
 ```
 
 ### 9.2 Config reference (new)
 
 | Variable | Default | Phase |
-|---|---|---|
+| --- | --- | --- |
 | `DATA_MODE` | `mock` | 0 |
 | `OPENF1_API_TOKEN` | unset (live mode needs it) | 0 |
 | `REPLAY_PLAYLIST` | curated session keys | 1 |
 | `REPLAY_SPEED` | `10` | 1 |
 | `REPLAY_EPOCH` | fixed ISO timestamp | 1 |
+| `REPLAY_WINDOW_TICKS` | `48` | 1 |
+| `DEMO_STATELESS` | `true` on Vercel, `false` for the container path | 1 |
 | `EPISODE_MAX_GAP_S` / `EPISODE_MERGE_S` / `EPISODE_MIN_LAPS` | `2.0` / 1 lap / `1` | 2 |
 | `REPORTS_SOURCE_URL` | raw GitHub URL of `reports/` | 2 |
 | `PASS_MODEL` | `none` | 3 |
@@ -686,23 +717,24 @@ README rewrite at the end of each phase, in this order: demo link + GIF → what
 
 ### 10.1 Before sharing the link
 
-- [ ] Published app link works in a private browser window and after a cold start.
+- [ ] Production URL works in a private browser window and after the function has gone cold.
 - [ ] README top section has the demo link, GIF and a 3-line summary of what the project does.
-- [ ] `docs/replit-build-log.md` exists.
-- [ ] The published `replit.app` URL and the GitHub repo link are both recorded somewhere durable.
+- [ ] `docs/DEPLOY-VERCEL.md` matches what was actually deployed: projects, root directories, env vars, CORS, replay data.
+- [ ] A PR preview URL was checked too, so reviewers get a link that works.
+- [ ] The production URL and the GitHub repo link are both recorded somewhere durable.
 
-### 10.2 The 30-day free-publish limit
+### 10.2 What the free plan does and doesn't allow
 
-The free plan's published link **goes down after 30 days**.
+Vercel Hobby has no publish expiry — the URL stays up — but it has its own edges:
 
-- Note the publish date and put a reminder on day 25.
-- Before the link expires, check whether the free plan lets you republish. This couldn't be confirmed in advance.
-- The GIF, screenshots and README carry the project even while the link is down.
-- Re-publishing after Phase 2 lands naturally resets the clock, if republishing is allowed.
+- **Non-commercial use only.** A portfolio demo is fine; anything with revenue attached isn't.
+- **Execution limits and monthly invocation/bandwidth allowances.** Every open tab polls the broadcast replay, so a burst of visitors is a burst of invocations. Keep the dashboard's poll interval honest and let `Cache-Control: s-maxage` absorb concurrent viewers at the edge (1.4).
+- **No persistent process, no writable disk.** Nothing on the request path may assume state survives between requests. Anything that needs to accumulate belongs in a build step, a GitHub Action, or the container path.
+- Check the current Hobby limits when you deploy; they change.
 
 ### 10.3 Optional: a database for reports
 
-Everything is files today. Storing episodes and reports in Replit's database or SQLite, and querying them for the Reports page, would remove the raw-GitHub fetch described in 2.6 and make season filtering and cross-race queries cheap. Worth a small task after Phase 2 if time allows; files are fine until the report count makes them awkward.
+Everything is files today. SQLite isn't an option on the deploy target — the serverless filesystem is ephemeral — so this would mean a hosted Postgres free tier (Vercel Postgres, Neon or similar). Querying episodes and reports from it would remove the raw-GitHub fetch described in 2.6 and make season filtering and cross-race queries cheap. Worth a small task after Phase 2 if time allows; files are fine until the report count makes them awkward.
 
 ---
 
@@ -711,10 +743,10 @@ Everything is files today. Storing episodes and reports in Replit's database or 
 Assumes roughly **20 focused hours/week**. Scale the dates if your availability differs. The dates are proposals, not commitments.
 
 | Window | Work | Milestone |
-|---|---|---|
+| --- | --- | --- |
 | **Sep 11–12** | Phase 0 (clock, pipeline, sources) | PR merged, CI green |
-| **Sep 12–18** | Phase 1: ingest, timeline, replay in GitHub; schedule, packaging and publish in Replit | Public `replit.app` URL |
-| **~Sep 19** | README, GIF, build log, checklist in §10.1 | **Demo published and shareable** |
+| **Sep 12–18** | Phase 1: ingest, timeline, replay; stateless schedule, Vercel packaging and publish | Public `vercel.app` URL |
+| **~Sep 19** | README, GIF, deploy notes, checklist in §10.1 | **Demo published and shareable** |
 | Sep 21 – Oct 4 | Phase 2 (analyzer, episodes, outcomes, reports, Action, backfill) | Reports page live; first automatic 2026 report |
 | Oct 5–11 | Detector evaluation (2.8), README metrics, optional database task (§10.3) | First real metrics published |
 | Oct 12 – Nov 15 | Phase 3 (dataset, features, splits, models, model card, serving) | Pass probability live behind flag |
@@ -727,16 +759,16 @@ If the Phase 1 date slips, publish the **minimum shippable cut** (§1.10) rather
 ## 12. Risks and mitigations
 
 | Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| `next build` runs out of memory on a free Replit workspace | Medium | Blocks publish | `replit-dist.yml` builds in Actions; Replit pulls prebuilt `frontend/out` |
-| Free published link expires after 30 days | High | Visitors hit a dead link | Day-25 reminder; check republish; GIF and screenshots in README |
-| App sleeps; cold start shows nothing | High | Bad first impression | Stateless schedule + fast seek; loading state that says "Warming up replay…" |
+| --- | --- | --- | --- |
+| Committed race data pushes the backend function past Vercel's bundle limit | Medium | Blocks deploy | Measure sizes in 1.1 before choosing the playlist; target < 50 MB; trim stored fields or cut races; bulk raw data stays in Actions artifacts |
+| Per-request rebuild too slow, or invocations add up | Medium | Sluggish board, or free-tier limits hit | Bounded window (1.4); measure the rebuild; `s-maxage` edge caching collapses concurrent viewers onto one rebuild |
+| Cold start shows nothing | Medium | Bad first impression | Any instance can serve any moment, because the schedule is a pure function of the clock; lazy memoised race loading; loading state that says "Warming up replay…" |
 | OpenF1 rate limits (undocumented) or temporary outage | Medium | Ingest fails | Fetch once and cache; backoff; curated races committed so the app never needs OpenF1 at runtime |
 | `overtakes` endpoint incomplete | Known | Noisy labels | Cross-check with position changes; publish agreement rate; position-based labels by default |
 | Safety car / VSC produces fake battles | High until B4 fixed | Detector looks broken on real data | Race control → track status in Phase 1; explicit test |
 | Interval feed gaps or lag | Medium | Jumpy gaps, bad closing rates | Existing gap-sample timestamps + staleness logic; episode merge window |
 | 2026 rules break the model | High | Worse 2026 predictions | Planned Split B/C evaluation; report it openly |
-| Replit's 2 GB storage | Low with plan | Workspace full | Only curated races in Replit; bulk raw data in Actions artifacts/Release assets |
+| Stateless rebuild disagrees with the continuous run | Medium | Battles differ between Docker and Vercel | Equivalence test (1.8); window ≥ `BATTLE_GAP_TREND_WINDOW × 3`; document the bounded difference |
 | Scope creep before publishing | High | Demo never goes live | Hard cut line in §1.10; publish first, polish after |
 | Wall-clock bugs hiding elsewhere | Medium | Subtle replay errors | Grep-enforced rule: no `datetime.now()` outside `clock.py`, `health.py` and `sources/mock.py` (add a test that fails on it) |
 
@@ -758,7 +790,7 @@ None of these block Phase 0. Answer them as each phase starts.
 ## 14. Reference: OpenF1 endpoints we use
 
 | Endpoint | Key fields | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `sessions` | `session_key`, `session_name`, `session_type`, `date_start`, `date_end`, `circuit_short_name`, `year`, `is_cancelled` | Filter `session_type=Race`; `session_name` distinguishes Sprint |
 | `drivers` | `driver_number`, names, `team_name` | Per session |
 | `position` | `date`, `driver_number`, `position` | No gap fields (that was the old P0-1 bug) |
@@ -772,4 +804,4 @@ None of these block Phase 0. Answer them as each phase starts.
 | `starting_grid` | grid positions | Available after official results |
 | `weather` | rainfall, temperatures | Every minute; Phase 3 v2 |
 
-**Sources:** [OpenF1 (pricing, live vs historical)](https://openf1.org/) · [OpenF1 API docs](https://openf1.org/docs/) · [Replit Starter plan](https://docs.replit.com/billing/plans/starter-plan) · [F1 2026 terms explained (The Race)](https://www.the-race.com/formula-1/boost-overtake-mode-active-aero-recharge-key-2026-terms-explained/) · [FastF1 PR #760 (live timing auth)](https://github.com/theOehrly/Fast-F1/pull/760)
+**Sources:** [OpenF1 (pricing, live vs historical)](https://openf1.org/) · [OpenF1 API docs](https://openf1.org/docs/) · [Vercel limits (Hobby)](https://vercel.com/docs/limits) · [F1 2026 terms explained (The Race)](https://www.the-race.com/formula-1/boost-overtake-mode-active-aero-recharge-key-2026-terms-explained/) · [FastF1 PR #760 (live timing auth)](https://github.com/theOehrly/Fast-F1/pull/760)
