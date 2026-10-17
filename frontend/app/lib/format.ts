@@ -5,11 +5,22 @@ export function teamColour(hex: string | null | undefined): string {
   return hex ? `#${hex}` : '#4b5563'
 }
 
-/** "+0.7" for an interval, "Leader" for P1, an en dash when unknown. */
+/**
+ * A gap in seconds to the thousandth, as F1's own timing screens show it:
+ * 0.456, 12.345. One precision everywhere, so a gap reads the same on the
+ * timing tower, the battle cards and the score breakdown.
+ */
+export const GAP_DECIMALS = 3
+
+export function formatGap(seconds: number): string {
+  return seconds.toFixed(GAP_DECIMALS)
+}
+
+/** "+0.456" for an interval, "Leader" for P1, an en dash when unknown. */
 export function formatInterval(position: number, gap: number | null | undefined): string {
   if (position === 1) return 'Leader'
   if (gap === null || gap === undefined) return '–'
-  return `+${gap.toFixed(gap < 10 ? 1 : 0)}`
+  return `+${formatGap(gap)}`
 }
 
 /** Gap change per minute, the unit the explanation text already uses. Always positive; see closingLabel. */

@@ -3,6 +3,8 @@
  * delta beside it carries the same meaning in text for anyone who cannot tell
  * the two colours apart.
  */
+import { formatGap } from '../lib/format'
+
 interface SparklineProps {
   data: number[]
   /** Drawing height in px; the line always fills its container's width. */
@@ -30,7 +32,7 @@ export function Sparkline({ data, height = 40, showOneSecond = false, label }: S
   const closing = data[data.length - 1] - data[0] < 0
   const colour = closing ? '#4ADE80' : '#F87171'
   const description =
-    label ?? `Gap ${closing ? 'closing' : 'opening'} from ${data[0].toFixed(2)}s to ${data[data.length - 1].toFixed(2)}s`
+    label ?? `Gap ${closing ? 'closing' : 'opening'} from ${formatGap(data[0])}s to ${formatGap(data[data.length - 1])}s`
 
   return (
     <svg

@@ -19,6 +19,10 @@ export interface Battle {
   battle_score: number
   /** How battle_score was reached; absent from older backends. */
   score_breakdown?: ScoreBreakdown | null
+  /** Championship points that change hands if the chaser passes (7 for the lead, 0 outside the points). */
+  points_at_stake?: number
+  /** The list order: battle_score boosted x1 (no points) to x2 (the lead) by points_at_stake. */
+  rank_score?: number
   intensity: BattleIntensity
   explanation: string
   trend_gap_s: number[]

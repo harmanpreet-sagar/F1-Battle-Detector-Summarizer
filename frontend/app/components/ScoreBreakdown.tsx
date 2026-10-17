@@ -5,7 +5,7 @@
  */
 import type { Battle, ScoreBreakdown as Breakdown } from '../types/api'
 import { HOT_SCORE, WATCH_SCORE } from '../lib/scoring'
-import { closingLabel, formatClosing, formatPace } from '../lib/format'
+import { closingLabel, formatClosing, formatGap, formatPace } from '../lib/format'
 
 const TERMS = [
   { key: 'gap', label: 'Gap', weight: 0.5, swatch: 'bg-f1-red' },
@@ -23,7 +23,7 @@ function penaltyReasons(battle: Battle): string[] {
 
 export function ScoreBreakdown({ battle, breakdown }: { battle: Battle; breakdown: Breakdown }) {
   const inputs: Record<(typeof TERMS)[number]['key'], string> = {
-    gap: `${battle.gap_now_s.toFixed(2)}s`,
+    gap: `${formatGap(battle.gap_now_s)}s`,
     closing:
       closingLabel(battle.closing_rate_s_per_s) === 'Opening'
         ? `opening ${formatClosing(battle.closing_rate_s_per_s)}`
@@ -84,6 +84,16 @@ export function ScoreBreakdown({ battle, breakdown }: { battle: Battle; breakdow
           <dd className="border-t border-ink-500 pt-1.5" />
           <dd className="border-t border-ink-500 pt-1.5 text-right font-bold">{breakdown.score.toFixed(2)}</dd>
         </div>
+        {battle.rank_score !== undefined && (
+          // The score says how good the fight is; this says where it is listed.
+          <div className="contents">
+            <dt className="text-mute">Ranked</dt>
+            <dd className="text-right text-mute-soft">
+              {battle.points_at_stake ? `${battle.points_at_stake} pts at stake` : 'no points at stake'}
+            </dd>
+            <dd className="text-right text-mute-soft">{battle.rank_score.toFixed(2)}</dd>
+          </div>
+        )}
       </dl>
     </section>
   )

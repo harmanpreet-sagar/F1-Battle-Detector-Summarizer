@@ -4,7 +4,7 @@
  * compact card.
  */
 import type { Battle } from '../types/api'
-import { closingLabel, formatClosing, formatPace, teamColour, trendDelta, tyreShort } from '../lib/format'
+import { closingLabel, formatClosing, formatGap, formatPace, teamColour, trendDelta, tyreShort } from '../lib/format'
 import { IntensityTag } from './IntensityTag'
 import { ScoreBreakdown } from './ScoreBreakdown'
 import { Sparkline } from './Sparkline'
@@ -72,7 +72,7 @@ function Delta({ battle }: { battle: Battle }) {
   return (
     <div className={`font-mono text-[13px] tnum ${closing ? 'text-closing' : 'text-opening'}`}>
       {closing ? '−' : '+'}
-      {Math.abs(delta).toFixed(2)}s over {battle.trend_gap_s.length} readings
+      {formatGap(Math.abs(delta))}s over {battle.trend_gap_s.length} readings
     </div>
   )
 }
@@ -112,7 +112,7 @@ function FeaturedCard({ battle }: { battle: Battle }) {
           <IntensityTag intensity={battle.intensity} size="lg" />
           <div className="text-right">
             <div className="font-mono text-[56px] font-bold leading-none tnum">
-              {battle.gap_now_s.toFixed(2)}
+              {formatGap(battle.gap_now_s)}
               <span className="text-2xl text-mute">s</span>
             </div>
             <Delta battle={battle} />
@@ -156,7 +156,7 @@ function CompactCard({ battle }: { battle: Battle }) {
       </div>
       <div className="flex items-end justify-between gap-3">
         <div className="font-mono text-[34px] font-bold leading-none tnum">
-          {battle.gap_now_s.toFixed(2)}
+          {formatGap(battle.gap_now_s)}
           <span className="text-base text-mute">s</span>
         </div>
         <div className="w-40">

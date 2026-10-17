@@ -65,7 +65,7 @@ export default function Home() {
             </h2>
             {!isLoading && (
               <span className="text-sm text-mute">
-                {count} active{count > 0 && ' · ranked by battle score'}
+                {count} active{count > 0 && ' · ranked by score and points at stake'}
               </span>
             )}
           </div>

@@ -67,6 +67,11 @@ class Battle(BaseModel):
     pace_delta_s_per_lap: Optional[float] = None
     battle_score: float
     score_breakdown: Optional[ScoreBreakdown] = None
+    # Championship points that change hands if the two cars swap, and the
+    # ordering that weighs them in. battle_score says how good the fight is;
+    # rank_score says where it goes in the list.
+    points_at_stake: int = 0
+    rank_score: float = 0.0
     intensity: Literal["HOT", "WATCH", "NONE"]
     explanation: str
     trend_gap_s: List[float] = Field(default_factory=list, description="Last 6 updates")

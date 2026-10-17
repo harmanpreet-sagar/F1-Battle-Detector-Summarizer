@@ -31,6 +31,39 @@ def within_one_second(season: Optional[int]) -> str:
     return "Within 1s (Overtake Mode range)"
 
 
+# Race points for P1..P10. Unchanged since 2010; the fastest-lap point of
+# 2019-2024 needed a top-ten finish and a specific lap, so it is left out.
+RACE_POINTS = (25, 18, 15, 12, 10, 8, 6, 4, 2, 1)
+
+
+def points_for(position: int) -> int:
+    return RACE_POINTS[position - 1] if 1 <= position <= len(RACE_POINTS) else 0
+
+
+def points_at_stake(ahead_position: int) -> int:
+    """
+    Points that change hands if the chaser passes: the lead is worth 7, P10
+    against P11 still 1, and nothing below the points matters to the table.
+    """
+    return points_for(ahead_position) - points_for(ahead_position + 1)
+
+
+# The most any one pass is worth (the lead), which the boost is scaled by.
+MAX_POINTS_AT_STAKE = max(points_at_stake(p) for p in range(1, len(RACE_POINTS) + 1))
+
+
+def rank_score(battle_score: float, ahead_position: int) -> float:
+    """
+    Where a battle goes in the list: its score, boosted by what it is for.
+
+    The boost runs from x1 (no points at stake) to x2 (the lead), so two equal
+    fights are ordered by position, a fight for the lead beats almost anything,
+    and a genuinely hot fight at the back can still outrank a dull one in the
+    points. HOT/WATCH are still decided by battle_score alone.
+    """
+    return battle_score * (1 + points_at_stake(ahead_position) / MAX_POINTS_AT_STAKE)
+
+
 # Weights of the three terms in the battle score. They sum to 1.
 GAP_WEIGHT = 0.5
 CLOSING_WEIGHT = 0.3
@@ -250,7 +283,8 @@ class BattleDetector:
                 DRS for Overtake Mode; unknown means the current rules.
 
         Returns:
-            List of Battle objects sorted by score (highest first).
+            List of Battle objects, highest rank_score first: the battle
+            score weighted by the points at stake (see rank_score).
         """
         battles = self._detect(driver_states, driver_histories, track_status, now, season)
         self._latest = battles
@@ -368,7 +402,7 @@ class BattleDetector:
             if flags.pit_window_active:
                 explanation_parts.append("Pit window active")
             if not explanation_parts:
-                explanation_parts.append(f"Gap: {gap:.2f}s")
+                explanation_parts.append(f"Gap: {gap:.3f}s")
 
             explanation = " • ".join(explanation_parts)
 
@@ -384,6 +418,8 @@ class BattleDetector:
                 pace_delta_s_per_lap=pace_delta,
                 battle_score=score,
                 score_breakdown=breakdown,
+                points_at_stake=points_at_stake(ahead.position),
+                rank_score=rank_score(score, ahead.position),
                 intensity=intensity,
                 explanation=explanation,
                 trend_gap_s=trend_gaps,
@@ -399,7 +435,8 @@ class BattleDetector:
         self._evict(current_time)
 
         # Sort by score
-        battles.sort(key=lambda b: b.battle_score, reverse=True)
+        # Battles near the front matter more: they move points.
+        battles.sort(key=lambda b: b.rank_score, reverse=True)
 
         logger.debug(f"Detected {len(battles)} battles (tracked {len(self._tracked)} total)")
         return battles
