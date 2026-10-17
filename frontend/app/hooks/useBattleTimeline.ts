@@ -7,6 +7,12 @@
  * rebuilt per request from a short window, so the backend has no record of
  * earlier battles to send; whole-race episodes are Phase 2's job. Until then
  * the history is kept in sessionStorage so a reload does not wipe it.
+ *
+ * A replay loops: when the playlist comes round, the same race (same
+ * session_key) starts again from lap 1. A lap lower than the latest one seen
+ * means a new run, and the old run's history is dropped rather than drawn
+ * over it. The same check discards a stored history from an earlier run when
+ * the page is reloaded.
  */
 'use client'
 
@@ -28,6 +34,8 @@ export interface TimelineEpisode {
 export interface Timeline {
   sessionKey: number | null
   startLap: number | null
+  /** The highest lap recorded, to tell when the replay has started over. */
+  lastLap: number | null
   episodes: TimelineEpisode[]
   neutralisedLaps: number[]
 }
@@ -39,6 +47,7 @@ const STORAGE_PREFIX = 'f1bd.timeline.'
 const empty = (sessionKey: number | null): Timeline => ({
   sessionKey,
   startLap: null,
+  lastLap: null,
   episodes: [],
   neutralisedLaps: [],
 })
@@ -64,6 +73,20 @@ function save(timeline: Timeline) {
   } catch {
     // Not worth failing the page over.
   }
+}
+
+/** Latest lap a timeline has seen. Falls back to its episodes for histories saved before lastLap existed. */
+function latestLap(timeline: Timeline): number | null {
+  if (timeline.lastLap !== null && timeline.lastLap !== undefined) return timeline.lastLap
+  const laps = timeline.episodes.map((e) => e.lastLap)
+  if (timeline.startLap !== null) laps.push(timeline.startLap)
+  return laps.length ? Math.max(...laps) : null
+}
+
+/** True when `lap` is behind what this timeline has already seen: the replay looped. */
+export function isNewRun(timeline: Timeline, lap: number): boolean {
+  const latest = latestLap(timeline)
+  return latest !== null && lap < latest
 }
 
 const isNeutral = (s: TrackStatus | null | undefined) => s === 'sc' || s === 'vsc' || s === 'red'
@@ -113,6 +136,7 @@ export function advance(
   return {
     ...timeline,
     startLap: timeline.startLap ?? lap,
+    lastLap: Math.max(latestLap(timeline) ?? lap, lap),
     episodes,
     neutralisedLaps,
   }
@@ -138,7 +162,9 @@ export function useBattleTimeline({ sessionKey, lap, battles, trackStatus }: Opt
     if (!lap || !battles) return
     setTimeline((t) => {
       if (t.sessionKey !== key) return t
-      const next = advance(t, lap, battles, trackStatus)
+      // Same race from lap 1 again: start a fresh history, not one drawn over the last run.
+      const base = isNewRun(t, lap) ? empty(key) : t
+      const next = advance(base, lap, battles, trackStatus)
       save(next)
       return next
     })
