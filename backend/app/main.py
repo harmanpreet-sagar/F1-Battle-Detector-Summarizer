@@ -9,11 +9,12 @@ import asyncio
 import logging
 
 from app import demo
-from app.clock import WallClock, utcnow
+from app.clock import ReplayClock, WallClock, utcnow
 from app.config import config
 from app.health import get_health_status, health_manager
 from app.openf1_client import openf1_client
 from app.pipeline import RacePipeline
+from app.replay.broadcast import get_broadcast
 from app.session import session_manager
 from app.sources import build_source
 from app.mock_data import mock_data_generator
@@ -36,14 +37,14 @@ def current_pipeline() -> RacePipeline:
     The pipeline endpoints read from.
 
     Under DEMO_STATELESS there is no background loop to have filled one, so the
-    mock race is replayed up to the current instant and thrown away after the
-    response. Every handler below is unchanged either way - that is the whole
-    reason detection was moved behind a pipeline object.
-
-    Phase 1 registers a second long-running one under "replay" and flips
-    app.state.active_pipeline; no request handler changes.
+    race - the cached replay, or the mock one - is rebuilt up to the current
+    instant and thrown away after the response. Every handler below is
+    unchanged either way - that is the whole reason detection was moved behind
+    a pipeline object.
     """
     if config.DEMO_STATELESS:
+        if config.DATA_MODE == "replay":
+            return get_broadcast().build_pipeline(utcnow())
         return demo.build_pipeline(utcnow())
     return app.state.pipelines[app.state.active_pipeline]
 
@@ -57,6 +58,13 @@ def reset_for_new_session(session_key):
 async def poll_session_status():
     """Background task to poll for current F1 session."""
     retry_delay = 30.0
+
+    if config.DATA_MODE == "replay":
+        # The broadcast schedule is the session: /session/current reads it
+        # straight from the clock, and ReplaySource marks the first tick of
+        # each race as a reset. Nothing here needs to poll, least of all
+        # OpenF1.
+        return
 
     while True:
         try:
@@ -158,9 +166,11 @@ app = FastAPI(
 # TestClient built without starting lifespan still has one to read.
 _pipelines: Dict[str, RacePipeline] = {
     "live": RacePipeline(clock=WallClock(), name="live"),
+    # Its clock is moved to race time by ReplaySource before every tick.
+    "replay": RacePipeline(clock=ReplayClock(utcnow()), name="replay"),
 }
 app.state.pipelines = _pipelines
-app.state.active_pipeline = "live"
+app.state.active_pipeline = "replay" if config.DATA_MODE == "replay" else "live"
 
 # CORS middleware
 app.add_middleware(
@@ -201,6 +211,11 @@ async def health():
 @app.get("/session/current")
 async def get_current_session():
     """Get current active F1 session."""
+    if config.DATA_MODE == "replay":
+        # A pure function of the wall clock on both paths, so it agrees with
+        # whatever the pipeline is showing.
+        return get_broadcast().session_at(utcnow()).model_dump()
+
     if config.DEMO_STATELESS:
         # No session poll loop either; derive the lap from the clock.
         return demo.build_session(utcnow()).model_dump()

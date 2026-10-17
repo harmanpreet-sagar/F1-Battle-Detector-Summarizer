@@ -269,7 +269,9 @@ class BattleDetector:
             # 3. Determine battle flags
             flags = BattleFlags(
                 pit_window_active=detect_pit_window(chaser_history),
-                under_yellow=(track_status in ["yellow", "sc", "vsc"]) if track_status else False,
+                # A red flag stops the race outright; whatever gaps are left
+                # over from before it are not a battle.
+                under_yellow=(track_status in ["yellow", "sc", "vsc", "red"]) if track_status else False,
                 data_quality_warning=(
                     chaser.data_confidence != "high" or
                     ahead.data_confidence != "high"

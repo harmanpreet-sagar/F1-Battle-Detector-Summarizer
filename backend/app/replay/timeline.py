@@ -193,6 +193,12 @@ class Timeline:
     events: List[Event]
     drivers: Set[int] = field(default_factory=set)
     initial_track_status: TrackStatus = "green"
+    # Each driver's last position and gap row from before `start`. Position
+    # emits only on change, so a car holding its grid slot has no position
+    # event for a long time after lights out - 26 minutes for the last of
+    # them in the 2025 Hungarian GP. A live poll at the start would still
+    # have returned that grid row, so replay starts from it too.
+    carried: List[Event] = field(default_factory=list)
 
     @property
     def duration(self) -> timedelta:
@@ -266,7 +272,9 @@ def build_timeline(
 
     # Rows stamped before lights out (formation lap, grid) stay in the archive
     # but have no place in the stream: replaying them means several minutes of
-    # a stationary grid before anything happens.
+    # a stationary grid before anything happens. The last of them per driver
+    # is still what the race starts from, so it is carried rather than lost.
+    carried = _carried_rows(event for event in events if event.at < start)
     events = [event for event in events if event.at >= start]
 
     timeline = Timeline(
@@ -276,6 +284,7 @@ def build_timeline(
         events=events,
         drivers=drivers,
         initial_track_status=initial_status,
+        carried=carried,
     )
     logger.info(
         "Timeline for %s: %d events over %.0f minutes, %d drivers, %d quiet period(s)",
@@ -288,6 +297,18 @@ def build_timeline(
 # --------------------------------------------------------------------------
 # Per-endpoint builders
 # --------------------------------------------------------------------------
+
+def _carried_rows(pre_race) -> List[Event]:
+    """The latest position and interval event per driver, from before the start."""
+    latest: Dict[Tuple[str, int], Event] = {}
+    for event in pre_race:
+        if event.kind not in ("position", "interval"):
+            continue
+        key = (event.kind, event.driver_number)
+        if key not in latest or event.at >= latest[key].at:
+            latest[key] = event
+    return sorted(latest.values(), key=lambda event: event.sort_key)
+
 
 def _position_events(rows: Sequence[Dict], drivers: Set[int]) -> List[PositionEvent]:
     events = []

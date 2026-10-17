@@ -111,7 +111,10 @@ F1-Battle-Detector-Summarizer/
 │   │   ├── ingest.py         # `python -m app.ingest` - cache a race
 │   │   ├── replay/
 │   │   │   ├── store.py      # The on-disk race cache and its manifests
-│   │   │   └── timeline.py   # Cached endpoints -> one event stream
+│   │   │   ├── timeline.py   # Cached endpoints -> one event stream
+│   │   │   ├── engine.py     # One race stepped on the live poll grid
+│   │   │   └── broadcast.py  # The shared replay schedule, rebuilt per request
+│   │   ├── sources/          # live, mock and replay DataSources
 │   │   └── config.py         # Configuration
 │   ├── data/sessions/        # Cached races, one directory per session_key
 │   ├── api/index.py          # Vercel entrypoint (ASGI)
@@ -206,6 +209,35 @@ orders of magnitude larger than everything else combined and nothing reads it.
 If the fetch fails with a certificate error, something on your machine is
 intercepting TLS. Point `OPENF1_CA_BUNDLE` at its CA certificate.
 
+## Replaying a cached race
+
+```bash
+cd backend
+DATA_MODE=replay uvicorn app.main:app --reload
+```
+
+`DATA_MODE=replay` plays the cached races (`REPLAY_PLAYLIST`, or every cached
+race) on a loop through the same pipeline live data uses. It works like a TV
+channel: there is one broadcast, and where it is depends only on the wall
+clock (`REPLAY_EPOCH`, `REPLAY_SPEED`), so every viewer and every server
+instance shows the same moment of the same race.
+
+Every 1.5 race-seconds, replay hands the pipeline exactly what a live poll at
+that instant would have returned: the latest position and gap row per driver,
+and lap times only once a live poller would have refreshed them. A test
+proves it: eight laps of the 2025 Hungarian GP go through a fake OpenF1 to
+`LiveSource` and through replay, and the battles match at every tick. Two
+more things replay knows that live polling does not: when a car has retired
+(it leaves the running order), and the track status from race control, so
+safety car periods show no battles.
+
+Under `DEMO_STATELESS` (serverless), each request rebuilds the broadcast's
+current moment instead: 60 ticks to fill driver history, then the last
+`REPLAY_WINDOW_TICKS` detected, ~40 ms. Across a full race that rebuild
+reports the same battles as a server that has run since lights out; only
+`duration_updates` can come out lower. Red-flag stoppages play back in
+`REPLAY_QUIET_PLAYBACK_S` seconds rather than as a frozen screen.
+
 ## Deployment
 
 ### Vercel (both halves, mock data on repeat)
@@ -240,7 +272,7 @@ Key environment variables (see `.env.example` files):
 - `DATA_MODE` - Where driver data comes from: `live`, `replay` or `mock` (default: `mock`)
   - `mock` - generated data, never touches the network. What CI runs.
   - `live` - OpenF1 live timing; needs `OPENF1_API_TOKEN` (paid Sponsor tier)
-  - `replay` - a cached historical race (Phase 1, not yet implemented)
+  - `replay` - cached historical races on a loop; see "Replaying a cached race"
 - `OPENF1_API_TOKEN` - Sponsor-tier token, required only for `DATA_MODE=live`
 - `TEST_MODE` - Deprecated alias for `DATA_MODE`. Honoured only when `DATA_MODE`
   is unset (`true` maps to `mock`, `false` to `live`) and warns at startup.
@@ -254,6 +286,14 @@ Key environment variables (see `.env.example` files):
 - `INGEST_MIN_SESSION_AGE_MIN` - Minutes after a session ends before `app.ingest`
   will fetch it (default: 45)
 - `REPLAY_QUIET_GAP_S` - Race-time silence that counts as a stoppage (default: 60s)
+- `REPLAY_PLAYLIST` - Session keys to play in order, comma separated (default:
+  every cached race)
+- `REPLAY_SPEED` - Race seconds per wall second (default: 1)
+- `REPLAY_EPOCH` - When the playlist started; fixes where the broadcast is
+  (default: `2026-01-01T00:00:00+00:00`)
+- `REPLAY_WINDOW_TICKS` - Ticks detected per request on the stateless path
+  (default: 48)
+- `REPLAY_QUIET_PLAYBACK_S` - Wall seconds a stoppage plays back in (default: 5)
 - `OPENF1_CA_BUNDLE` - CA bundle to verify OpenF1's certificate against. Only
   needed behind something that intercepts TLS (a corporate proxy, or antivirus
   doing HTTPS scanning), which presents its own certificate
@@ -276,8 +316,9 @@ serves them over REST; the frontend renders them live.
 - ✅ Docker setup and CI
 - ✅ Race ingest and cache (`python -m app.ingest`)
 - ✅ Replay timeline builder
-- ⬜ Replay playback (`DATA_MODE=replay`) - next
-- ✅ 217 backend tests
+- ✅ Replay playback (`DATA_MODE=replay`), container and serverless
+- ⬜ Replay on the deployed demo, `/api` routes and replay UI - next
+- ✅ 262 backend tests
 
 Known limits:
 

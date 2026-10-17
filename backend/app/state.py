@@ -125,10 +125,21 @@ class StateManager:
 
             driver_info = drivers_info.get(driver_num, {})
 
-            # Calculate data confidence based on recency, measured against the
-            # caller's clock rather than the wall.
             updated_at = parse_openf1_timestamp(pos_data.get("date")) or now
-            age_seconds = (now - updated_at).total_seconds()
+
+            gap_to_ahead, gap_to_leader, gap_updated_at = self._resolve_gaps(
+                driver_num, intervals_by_driver.get(driver_num)
+            )
+
+            # Confidence from recency, measured against the caller's clock
+            # rather than the wall, and against the freshest row this driver
+            # has. /position emits only when a car changes place, so a car
+            # holding P5 for ten minutes has a ten-minute-old position row that
+            # is unchanged, not stale. Scoring that age rated nearly every car
+            # 'low' and cut every battle's score by 30% - in a full replay of
+            # the 2025 Hungarian GP, two ticks out of 3,863 showed a battle.
+            freshest = max(updated_at, gap_updated_at) if gap_updated_at else updated_at
+            age_seconds = (now - freshest).total_seconds()
 
             if age_seconds < config.DATA_CONFIDENCE_MEDIUM_S:
                 confidence = "high"
@@ -136,10 +147,6 @@ class StateManager:
                 confidence = "medium"
             else:
                 confidence = "low"
-
-            gap_to_ahead, gap_to_leader, gap_updated_at = self._resolve_gaps(
-                driver_num, intervals_by_driver.get(driver_num)
-            )
 
             # A gap that has not refreshed in several interval cycles is no longer
             # trustworthy for closing-rate work, even if the position row is fresh.
@@ -191,6 +198,11 @@ class StateManager:
 
         return previous.gap_to_ahead_s, previous.gap_to_leader_s, previous.gap_updated_at
     
+    def drop_driver(self, driver_number: int):
+        """Forget one driver entirely: a retirement, not a missed poll."""
+        self.current_state.pop(driver_number, None)
+        self.history.pop(driver_number, None)
+
     def clear(self):
         """Clear all state (e.g., between sessions)."""
         self.current_state.clear()

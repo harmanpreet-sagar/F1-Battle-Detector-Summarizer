@@ -133,6 +133,26 @@ class Config:
     # treats them as retired and drops them from the running order.
     REPLAY_RETIREMENT_LAPS: int = int(os.getenv("REPLAY_RETIREMENT_LAPS", "2"))
 
+    # Replay playback (Phase 1.3 / 1.4)
+    # Session keys to play, in order, looping forever. Empty means every
+    # cached race, oldest first.
+    REPLAY_PLAYLIST: List[int] = [
+        int(key) for key in os.getenv("REPLAY_PLAYLIST", "").replace(" ", "").split(",") if key
+    ]
+    # Race seconds per wall second. The plan's settings are 1, 5, 10 and 20.
+    REPLAY_SPEED: float = float(os.getenv("REPLAY_SPEED", "1"))
+    # The wall-clock instant the playlist started. Every request and every
+    # instance agrees on it, so all viewers see the same moment of the same
+    # race - a per-process anchor would put each cold start at lap 1.
+    REPLAY_EPOCH: str = os.getenv("REPLAY_EPOCH", "2026-01-01T00:00:00+00:00")
+    # Ticks detected per request on the stateless path, after HISTORY_MAX_LEN
+    # ticks of history warm-up (see Broadcast.build_pipeline). Must exceed
+    # BATTLE_GAP_TREND_WINDOW * 3 (gaps refresh about every third tick) or no
+    # battle accumulates enough distinct samples to be shown at all.
+    REPLAY_WINDOW_TICKS: int = int(os.getenv("REPLAY_WINDOW_TICKS", "48"))
+    # Wall seconds a stoppage (see REPLAY_QUIET_GAP_S) is played back in.
+    REPLAY_QUIET_PLAYBACK_S: float = float(os.getenv("REPLAY_QUIET_PLAYBACK_S", "5.0"))
+
     # Polling intervals
     POLL_POSITIONS_INTERVAL_S: float = float(os.getenv("POLL_POSITIONS_INTERVAL_S", "1.5"))
     POLL_LAPS_INTERVAL_S: float = float(os.getenv("POLL_LAPS_INTERVAL_S", "10.0"))

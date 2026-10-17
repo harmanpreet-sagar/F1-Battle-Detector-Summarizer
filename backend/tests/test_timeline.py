@@ -66,6 +66,27 @@ def test_pre_race_rows_are_dropped(tmp_path):
     assert not [e for e in kinds(timeline, "position") if e.at < RACE_START]
 
 
+def test_the_grid_is_carried_into_the_start(tmp_path):
+    """
+    /position emits only on change, so a car holding its grid slot has no
+    position event for a long time after lights out. A live poll at the start
+    would still return its grid row, so the timeline keeps each driver's last
+    pre-race position and gap as the state the race starts from.
+    """
+    rows = race_rows.endpoints()
+    rows["position"].append({
+        "session_key": race_rows.SESSION_KEY, "driver_number": 16, "position": 3,
+        "date": (RACE_START - timedelta(seconds=10)).isoformat(),
+    })
+    timeline = timeline_of(tmp_path, rows)
+
+    carried = {(e.kind, e.driver_number): e for e in timeline.carried}
+    assert {d for kind, d in carried if kind == "position"} == set(DRIVERS)
+    # The latest pre-race row per driver, not the first
+    assert carried[("position", 16)].at == RACE_START - timedelta(seconds=10)
+    assert all(e.at < RACE_START for e in timeline.carried)
+
+
 def test_a_session_start_after_lights_out_wins(tmp_path):
     """
     Whichever candidate is later wins. A trimmed archive whose session starts
