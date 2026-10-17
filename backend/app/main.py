@@ -3,6 +3,7 @@ FastAPI application entry point with background tasks for polling OpenF1 API.
 """
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -449,7 +450,24 @@ def mount_frontend(target: FastAPI, directory: Optional[str]) -> bool:
     return True
 
 
-mount_frontend(app, config.FRONTEND_DIR)
+def serve_root(target: FastAPI, directory: Optional[str]) -> None:
+    """
+    What / is: the dashboard when there is one to serve, else a pointer to /api.
+
+    Without the redirect, opening the backend's own URL on Vercel - where the
+    frontend is a separate project - answers {"detail": "Not Found"}, which
+    reads as a broken deployment rather than an API living one level down.
+    """
+    if mount_frontend(target, directory):
+        return
+
+    async def to_api():
+        return RedirectResponse("/api")
+
+    target.add_api_route("/", to_api, include_in_schema=False, name="root_redirect")
+
+
+serve_root(app, config.FRONTEND_DIR)
 
 
 if __name__ == "__main__":

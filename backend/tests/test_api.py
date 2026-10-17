@@ -147,8 +147,15 @@ def test_endpoints_follow_the_active_pipeline():
 # --------------------------------------------------------------------------
 
 def test_every_route_lives_under_api():
-    """The container path serves the frontend at /, so nothing else may."""
-    paths = {route.path for route in app.routes if hasattr(route, "methods")}
+    """
+    The container path serves the frontend at /, so nothing else may. The one
+    exception is the redirect from / to /api, which exists only when no
+    frontend is being served.
+    """
+    paths = {
+        route.path for route in app.routes
+        if hasattr(route, "methods") and getattr(route, "name", None) != "root_redirect"
+    }
 
     assert paths, "no routes registered"
     assert all(path.startswith("/api") for path in paths), sorted(paths)
@@ -192,27 +199,36 @@ def test_health_reports_the_mode(monkeypatch):
 # The container path: the exported frontend at /, the API still at /api (1.7)
 # --------------------------------------------------------------------------
 
-def test_the_frontend_is_served_at_the_root_and_api_still_wins(tmp_path):
-    from app.main import mount_frontend
+def an_app_serving(directory):
+    """A fresh app with the real API router, its root set up as main.py does."""
+    from fastapi import FastAPI
+    from app.main import api, serve_root
 
+    fresh = FastAPI()
+    fresh.include_router(api)
+    serve_root(fresh, directory)
+    return fresh
+
+
+def test_the_frontend_is_served_at_the_root_and_api_still_wins(tmp_path):
     (tmp_path / "index.html").write_text("<html>dashboard</html>", encoding="utf-8")
     # A static file that collides with an API path must not shadow it.
     (tmp_path / "api").mkdir()
     (tmp_path / "api" / "health").write_text("static impostor", encoding="utf-8")
 
-    assert mount_frontend(app, str(tmp_path))
-    try:
-        client, _, _ = fresh_client()
-        page = client.get("/")
-        assert page.status_code == 200 and "dashboard" in page.text
-        assert client.get("/api/health").json()["status"] in ("healthy", "degraded", "unhealthy")
-    finally:
-        app.router.routes[:] = [r for r in app.router.routes if getattr(r, "name", None) != "frontend"]
+    client = TestClient(an_app_serving(str(tmp_path)))
+
+    page = client.get("/")
+    assert page.status_code == 200 and "dashboard" in page.text
+    assert client.get("/api/health").json()["status"] in ("healthy", "degraded", "unhealthy")
 
 
-def test_no_frontend_directory_means_the_api_alone(tmp_path):
-    from app.main import mount_frontend
+def test_without_a_frontend_the_root_points_at_the_api(tmp_path):
+    """On Vercel the backend is its own project; its root must not read as broken."""
+    for directory in (None, str(tmp_path / "missing")):
+        client = TestClient(an_app_serving(directory))
 
-    assert mount_frontend(app, None) is False
-    assert mount_frontend(app, str(tmp_path / "missing")) is False
-    assert not [r for r in app.router.routes if getattr(r, "name", None) == "frontend"]
+        response = client.get("/", follow_redirects=False)
+        assert response.status_code == 307
+        assert response.headers["location"] == "/api"
+        assert client.get("/").json()["docs"] == "/api/docs"
