@@ -1,42 +1,23 @@
 /**
- * Connection status banner showing data freshness.
+ * Connection status strip for live data. In replay the header carries the
+ * REPLAY label instead, and this only appears if the connection drops.
  */
 import type { ConnectionStatus as Status } from '../types/api'
 
-interface ConnectionStatusProps {
-  status: Status
+const CONFIG: Record<Status, { className: string; dot: string; text: string }> = {
+  live: { className: 'bg-green-700', dot: 'bg-green-300', text: 'Live' },
+  delayed: { className: 'bg-yellow-600 text-ink-950', dot: 'bg-ink-950', text: 'Delayed' },
+  reconnecting: { className: 'bg-red-700', dot: 'bg-red-200', text: 'Reconnecting' },
+  // Never imply a replay is live.
+  replay: { className: 'bg-ink-600', dot: 'bg-mute', text: 'Replay · Recorded race' },
 }
 
-export function ConnectionStatus({ status }: ConnectionStatusProps) {
-  const statusConfig = {
-    live: {
-      color: 'bg-green-600',
-      text: 'LIVE',
-      icon: '🟢',
-    },
-    delayed: {
-      color: 'bg-yellow-600',
-      text: 'DELAYED',
-      icon: '🟡',
-    },
-    reconnecting: {
-      color: 'bg-red-600',
-      text: 'RECONNECTING',
-      icon: '🔴',
-    },
-    // Never imply a replay is live.
-    replay: {
-      color: 'bg-gray-700',
-      text: 'REPLAY · RECORDED RACE',
-      icon: '⏵',
-    },
-  }
-
-  const config = statusConfig[status]
-
+export function ConnectionStatus({ status }: { status: Status }) {
+  const c = CONFIG[status]
   return (
-    <div className={`${config.color} text-white px-4 py-2 text-center font-semibold`}>
-      {config.icon} {config.text}
+    <div role="status" className={`${c.className} flex items-center justify-center gap-2 px-4 py-1.5 font-display text-sm font-bold uppercase tracking-[0.1em]`}>
+      <span className={`h-2 w-2 rounded-full ${c.dot} ${status === 'live' ? 'animate-pulse' : ''}`} aria-hidden />
+      {c.text}
     </div>
   )
 }

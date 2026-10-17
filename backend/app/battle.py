@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import logging
 
-from app.models import Battle, BattleFlags, DriverState
+from app.models import Battle, BattleFlags, DriverState, ScoreBreakdown
 from app.config import config
 
 logger = logging.getLogger(__name__)
@@ -31,6 +31,63 @@ def within_one_second(season: Optional[int]) -> str:
     return "Within 1s (Overtake Mode range)"
 
 
+# Weights of the three terms in the battle score. They sum to 1.
+GAP_WEIGHT = 0.5
+CLOSING_WEIGHT = 0.3
+PACE_WEIGHT = 0.2
+
+
+def score_breakdown(
+    gap_s: float,
+    closing_rate: Optional[float],
+    pace_delta: Optional[float],
+    flags: BattleFlags
+) -> ScoreBreakdown:
+    """
+    The battle score and each term's contribution to it.
+
+    The single place the score is computed: calculate_battle_score reads its
+    total, and the API serves the parts so the UI can explain the number.
+    """
+    # Base score from gap (0-1, smaller gap = higher score)
+    gap_score = max(0, 1 - (gap_s / config.BATTLE_MAX_GAP_S))
+
+    # Closing rate contribution (0-1)
+    # Negative closing_rate = gap is closing (chaser catching up) = exciting!
+    closing_score = 0.0
+    if closing_rate is not None and closing_rate < 0:
+        closing_score = min(1.0, abs(closing_rate) * 10)
+
+    # Pace advantage contribution (0-1)
+    pace_score = 0.0
+    if pace_delta is not None and pace_delta < 0:
+        # Negative = chaser is faster
+        pace_score = min(1.0, abs(pace_delta) * 2)
+
+    gap_part = gap_score * GAP_WEIGHT
+    closing_part = closing_score * CLOSING_WEIGHT
+    pace_part = pace_score * PACE_WEIGHT
+    raw_score = gap_part + closing_part + pace_part
+
+    # Penalties for special conditions
+    multiplier = 1.0
+    if flags.under_yellow:
+        multiplier *= 0.5
+    if flags.pit_window_active:
+        multiplier *= 0.3
+    if flags.data_quality_warning:
+        multiplier *= 0.7
+
+    return ScoreBreakdown(
+        gap=gap_part,
+        closing=closing_part,
+        pace=pace_part,
+        raw=raw_score,
+        multiplier=multiplier,
+        score=raw_score * multiplier,
+    )
+
+
 def calculate_battle_score(
     gap_s: float,
     closing_rate: Optional[float],
@@ -39,36 +96,10 @@ def calculate_battle_score(
 ) -> float:
     """
     Calculate battle score based on gap, closing rate, and pace.
-    
+
     Returns a score between 0 and 1, where higher is more intense.
     """
-    # Base score from gap (0-1, smaller gap = higher score)
-    gap_score = max(0, 1 - (gap_s / config.BATTLE_MAX_GAP_S))
-    
-    # Closing rate contribution (0-1)
-    # Negative closing_rate = gap is closing (chaser catching up) = exciting!
-    closing_score = 0.0
-    if closing_rate is not None and closing_rate < 0:
-        closing_score = min(1.0, abs(closing_rate) * 10)
-    
-    # Pace advantage contribution (0-1)
-    pace_score = 0.0
-    if pace_delta is not None and pace_delta < 0:
-        # Negative = chaser is faster
-        pace_score = min(1.0, abs(pace_delta) * 2)
-    
-    # Weighted combination
-    raw_score = (gap_score * 0.5) + (closing_score * 0.3) + (pace_score * 0.2)
-    
-    # Apply penalties for special conditions
-    if flags.under_yellow:
-        raw_score *= 0.5
-    if flags.pit_window_active:
-        raw_score *= 0.3
-    if flags.data_quality_warning:
-        raw_score *= 0.7
-    
-    return raw_score
+    return score_breakdown(gap_s, closing_rate, pace_delta, flags).score
 
 
 def _gap_sample_time(state: DriverState) -> datetime:
@@ -291,7 +322,8 @@ class BattleDetector:
             )
 
             # 4. Calculate battle score
-            score = calculate_battle_score(gap, closing_rate, pace_delta, flags)
+            breakdown = score_breakdown(gap, closing_rate, pace_delta, flags)
+            score = breakdown.score
 
             # Determine intensity
             if score > config.BATTLE_HOT_SCORE and gap < config.BATTLE_HOT_GAP_S and closing_rate and closing_rate < 0:
@@ -351,6 +383,7 @@ class BattleDetector:
                 closing_rate_s_per_s=closing_rate,
                 pace_delta_s_per_lap=pace_delta,
                 battle_score=score,
+                score_breakdown=breakdown,
                 intensity=intensity,
                 explanation=explanation,
                 trend_gap_s=trend_gaps,

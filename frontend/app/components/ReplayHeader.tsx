@@ -1,19 +1,18 @@
 /**
- * The replay header: what race this is, where it is, and that it is a replay.
+ * The header band: what race this is, where it is, and - in replay - that it
+ * is a recording.
  *
- *   REPLAY · 2025 Hungarian Grand Prix · Lap 34/70 · 1x
+ *   [REPLAY] 2025 HUNGARIAN GRAND PRIX   Hungaroring    LAP 34/70  0:52:18  5x
+ *   ███████████▒▒███████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
  *
  * The race clock ticks between polls by extrapolating from the last status at
  * the broadcast's speed, so it moves smoothly instead of jumping every 2s.
+ * Neutralised laps seen since the page opened are drawn on the progress bar.
  */
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import type { ReplayStatus } from '../types/api'
-
-interface ReplayHeaderProps {
-  status: ReplayStatus
-}
+import type { ReplayStatus, SessionStatus } from '../types/api'
 
 export function formatRaceClock(seconds: number): string {
   const total = Math.max(0, Math.floor(seconds))
@@ -48,46 +47,139 @@ function useRaceClock(status: ReplayStatus): number | null {
   return elapsed
 }
 
-export function ReplayHeader({ status }: ReplayHeaderProps) {
-  const elapsed = useRaceClock(status)
-  const race = [status.year, status.meeting_name].filter(Boolean).join(' ')
-  const lap = status.lap && status.total_laps ? `Lap ${status.lap}/${status.total_laps}` : null
+/** Runs of consecutive laps, e.g. [16,17,18,40] -> [[16,18],[40,40]]. */
+export function lapRuns(laps: number[]): [number, number][] {
+  const sorted = Array.from(new Set(laps)).sort((a, b) => a - b)
+  const runs: [number, number][] = []
+  for (const lap of sorted) {
+    const last = runs[runs.length - 1]
+    if (last && lap === last[1] + 1) last[1] = lap
+    else runs.push([lap, lap])
+  }
+  return runs
+}
+
+interface BandProps {
+  replay: boolean
+  title: string
+  subtitle?: string | null
+  lap?: number | null
+  totalLaps?: number | null
+  clock?: string | null
+  speed?: number | null
+  progressPct?: number | null
+  neutralisedLaps?: number[]
+}
+
+function HeaderBand({ replay, title, subtitle, lap, totalLaps, clock, speed, progressPct, neutralisedLaps = [] }: BandProps) {
+  const runs = totalLaps ? lapRuns(neutralisedLaps) : []
+  const lapPct = (l: number) => ((l - 1) / Math.max(1, totalLaps ?? 1)) * 100
 
   return (
-    <header className="mb-8">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm font-semibold uppercase tracking-wide text-gray-300">
-        <span className="rounded bg-f1-red px-2 py-0.5 text-white">Replay</span>
-        <span>{race}</span>
-        {lap && <span className="text-gray-500">·</span>}
-        {lap && <span>{lap}</span>}
-        {status.speed && <span className="text-gray-500">·</span>}
-        {status.speed && <span>{status.speed}x</span>}
-      </div>
+    <header className="border-b border-ink-600 bg-ink-900">
+      <div className="mx-auto flex max-w-[1360px] flex-wrap items-center gap-x-6 gap-y-3 px-4 py-3.5 md:px-6">
+        <div className="flex min-w-0 flex-[1_1_360px] flex-wrap items-center gap-x-3 gap-y-1">
+          {replay && (
+            <span className="rounded-[3px] bg-f1-red px-2.5 py-1 font-display text-sm font-extrabold tracking-[0.08em] text-white">
+              REPLAY
+            </span>
+          )}
+          <h1 className="font-display text-[22px] font-bold uppercase tracking-[0.02em]">{title}</h1>
+          {subtitle && <span className="text-sm text-mute">{subtitle}</span>}
+        </div>
 
-      <h1 className="mt-3 text-4xl font-bold">F1 Battle Detector</h1>
-
-      <div className="mt-4 flex items-center gap-4">
-        <span className="font-mono text-2xl tabular-nums" aria-label="Race time since lights out">
-          {elapsed !== null ? formatRaceClock(elapsed) : '-:--:--'}
-        </span>
-        <div
-          className="h-1.5 flex-1 overflow-hidden rounded bg-gray-700"
-          role="progressbar"
-          aria-valuenow={status.progress_pct ?? 0}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-label="Race progress"
-        >
-          <div
-            className="h-full bg-f1-red transition-[width] duration-1000 ease-linear"
-            style={{ width: `${status.progress_pct ?? 0}%` }}
-          />
+        <div className="flex flex-wrap items-center gap-5">
+          {lap ? (
+            <div className="flex items-baseline gap-1.5">
+              <span className="font-display text-sm font-semibold tracking-[0.08em] text-mute">LAP</span>
+              <span className="font-mono text-[26px] font-bold tnum">{lap}</span>
+              {totalLaps && <span className="font-mono text-base text-mute tnum">/{totalLaps}</span>}
+            </div>
+          ) : null}
+          {clock && (
+            <span className="font-mono text-xl font-medium text-mute-soft tnum" aria-label="Race time since lights out">
+              {clock}
+            </span>
+          )}
+          {replay && speed ? (
+            <span
+              className="rounded-md border border-ink-500 px-3 py-1.5 font-mono text-sm font-bold text-mute-strong"
+              title="Everyone watches the same broadcast, so playback speed is set by the server"
+            >
+              {speed}x
+            </span>
+          ) : null}
         </div>
       </div>
 
-      <p className="mt-3 inline-block rounded border border-gray-600 px-2 py-1 text-xs text-gray-300">
-        Replay of real race data (OpenF1). Not live.
-      </p>
+      {progressPct !== null && progressPct !== undefined && (
+        <div className="mx-auto max-w-[1360px] px-4 pb-3.5 md:px-6">
+          <div
+            className="relative h-2 overflow-hidden rounded bg-ink-600"
+            role="progressbar"
+            aria-valuenow={Math.round(progressPct)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label="Race progress"
+          >
+            <div
+              className="absolute inset-y-0 left-0 bg-f1-red transition-[width] duration-1000 ease-linear"
+              style={{ width: `${progressPct}%` }}
+            />
+            {runs.map(([a, b]) => (
+              <div
+                key={a}
+                className="absolute inset-y-0 bg-sc"
+                style={{ left: `${lapPct(a)}%`, width: `${lapPct(b + 1) - lapPct(a)}%` }}
+                title={a === b ? `Neutralised, lap ${a}` : `Neutralised, laps ${a}–${b}`}
+              />
+            ))}
+          </div>
+          <div className="mt-1.5 flex justify-between font-mono text-xs text-mute">
+            <span>L1</span>
+            {runs.length > 0 && (
+              <span className="text-sc">
+                SC {runs.map(([a, b]) => (a === b ? `L${a}` : `L${a}–${b}`)).join(', ')}
+              </span>
+            )}
+            <span>{totalLaps ? `L${totalLaps}` : 'Finish'}</span>
+          </div>
+        </div>
+      )}
     </header>
+  )
+}
+
+export function ReplayHeader({ status, neutralisedLaps }: { status: ReplayStatus; neutralisedLaps?: number[] }) {
+  const elapsed = useRaceClock(status)
+  const race = [status.year, status.meeting_name].filter(Boolean).join(' ')
+
+  return (
+    <HeaderBand
+      replay
+      title={race || 'Replay'}
+      subtitle={[status.circuit, 'Recorded race, not live'].filter(Boolean).join(' · ')}
+      lap={status.lap}
+      totalLaps={status.total_laps}
+      clock={elapsed !== null ? formatRaceClock(elapsed) : null}
+      speed={status.speed}
+      progressPct={status.progress_pct ?? 0}
+      neutralisedLaps={neutralisedLaps}
+    />
+  )
+}
+
+export function LiveHeader({ session }: { session: SessionStatus | undefined }) {
+  const lap = session?.current_lap
+  const total = session?.total_laps
+  return (
+    <HeaderBand
+      replay={false}
+      title={session?.meeting_name ?? 'F1 Battle Detector'}
+      subtitle={session?.session_name}
+      lap={lap}
+      totalLaps={total}
+      progressPct={lap && total ? (lap / total) * 100 : null}
+    />
   )
 }

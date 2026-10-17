@@ -40,6 +40,21 @@ class BattleFlags(BaseModel):
     data_quality_warning: bool = False
 
 
+class ScoreBreakdown(BaseModel):
+    """
+    How battle_score was reached, so the UI can show its working.
+
+    gap, closing and pace are the weighted contributions (they sum to raw);
+    multiplier is the product of the condition penalties; score = raw * multiplier.
+    """
+    gap: float
+    closing: float
+    pace: float
+    raw: float
+    multiplier: float = 1.0
+    score: float
+
+
 class Battle(BaseModel):
     """A detected battle between two drivers."""
     battle_id: str = Field(..., description="Unique ID: {chaser}_{ahead}")
@@ -51,6 +66,7 @@ class Battle(BaseModel):
     closing_rate_s_per_s: Optional[float] = None
     pace_delta_s_per_lap: Optional[float] = None
     battle_score: float
+    score_breakdown: Optional[ScoreBreakdown] = None
     intensity: Literal["HOT", "WATCH", "NONE"]
     explanation: str
     trend_gap_s: List[float] = Field(default_factory=list, description="Last 6 updates")

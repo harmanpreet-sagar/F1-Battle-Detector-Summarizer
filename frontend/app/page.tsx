@@ -1,17 +1,24 @@
 'use client'
 
-import { ConnectionStatus } from './components/ConnectionStatus'
+import { useMemo } from 'react'
+import { BattleTimeline } from './components/BattleTimeline'
 import { BattlesList } from './components/BattlesList'
+import { ConnectionStatus } from './components/ConnectionStatus'
 import { Footer } from './components/Footer'
-import { ReplayHeader } from './components/ReplayHeader'
+import { LiveHeader, ReplayHeader } from './components/ReplayHeader'
+import { RunningOrder } from './components/RunningOrder'
 import { TrackStatusBanner, isNeutralised } from './components/TrackStatusBanner'
 import { UpNext } from './components/UpNext'
+import { useBattleTimeline } from './hooks/useBattleTimeline'
 import { useBattles } from './hooks/useBattles'
 import { useReplayStatus } from './hooks/useReplayStatus'
+import { useRunningOrder } from './hooks/useRunningOrder'
 import { useSession } from './hooks/useSession'
 
 export default function Home() {
-  const { battles, connectionStatus, isLoading, error: battlesError } = useBattles(5)
+  // More than the cards show: the timeline wants every pair, not just the top few.
+  const { battles, connectionStatus, isLoading, error: battlesError } = useBattles(8)
+  const { drivers, isLoading: orderLoading } = useRunningOrder()
   const { session } = useSession()
   const { status, isReplay } = useReplayStatus()
 
@@ -20,44 +27,64 @@ export default function Home() {
   const shownStatus = isReplay ? (battlesError ? 'reconnecting' : 'replay') : connectionStatus
   const trackStatus = isReplay ? status?.track_status : session?.track_status
   const neutralised = isNeutralised(trackStatus)
+  const lap = isReplay ? status?.lap : session?.current_lap
+  const totalLaps = isReplay ? status?.total_laps : session?.total_laps
+
+  const timeline = useBattleTimeline({
+    sessionKey: isReplay ? status?.session_key : session?.session_key,
+    lap,
+    battles,
+    trackStatus,
+  })
+  const activeIds = useMemo(() => new Set((battles ?? []).map((b) => b.battle_id)), [battles])
+  const count = battles?.length ?? 0
 
   return (
-    <main className="min-h-screen p-4 md:p-8">
-      <ConnectionStatus status={shownStatus} />
+    <div className="min-h-screen">
+      {/* In replay the header says REPLAY; the strip only returns if the feed drops. */}
+      {shownStatus !== 'replay' && <ConnectionStatus status={shownStatus} />}
 
-      <div className="max-w-7xl mx-auto mt-8">
-        {isReplay && status ? (
-          <ReplayHeader status={status} />
-        ) : (
-          <header className="mb-8">
-            <h1 className="text-4xl font-bold mb-2">F1 Battle Detector</h1>
-            {session && (
-              <p className="text-gray-400">
-                {session.meeting_name} • {session.session_name}
-                {session.current_lap && ` • Lap ${session.current_lap}`}
-                {session.current_lap && session.total_laps && `/${session.total_laps}`}
-              </p>
+      {isReplay && status ? (
+        <ReplayHeader status={status} neutralisedLaps={timeline.neutralisedLaps} />
+      ) : (
+        <LiveHeader session={session} />
+      )}
+
+      <main className="mx-auto flex max-w-[1360px] flex-wrap items-start gap-6 px-4 py-6 md:px-6">
+        {/* On a phone the battles come first; the tower follows. */}
+        <div className="order-2 w-full flex-[1_1_300px] md:order-1 md:max-w-[340px]">
+          <RunningOrder drivers={drivers} battles={battles ?? []} isLoading={orderLoading} muted={neutralised} />
+        </div>
+
+        <div className="order-1 flex min-w-0 flex-[999_1_560px] flex-col gap-5 md:order-2">
+          <TrackStatusBanner status={trackStatus} stoppage={status?.stoppage} />
+
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="font-display text-[34px] font-extrabold uppercase leading-none tracking-[0.02em]">
+              Top battles now
+            </h2>
+            {!isLoading && (
+              <span className="text-sm text-mute">
+                {count} active{count > 0 && ' · ranked by battle score'}
+              </span>
             )}
-          </header>
-        )}
+          </div>
 
-        <TrackStatusBanner status={trackStatus} stoppage={status?.stoppage} />
-
-        <div>
-          <h2 className="text-2xl font-semibold mb-4">Top Battles Now</h2>
           {isLoading ? (
-            <div className="text-gray-400">Loading battles...</div>
+            <div className="text-mute">Loading battles…</div>
           ) : (
             <BattlesList battles={battles || []} muted={neutralised} />
           )}
+
+          <BattleTimeline timeline={timeline} currentLap={lap} totalLaps={totalLaps} activeIds={activeIds} />
+
+          {isReplay && status && <UpNext race={status.next_race} currentSessionKey={status.session_key} />}
         </div>
+      </main>
 
-        {isReplay && status && (
-          <UpNext race={status.next_race} currentSessionKey={status.session_key} />
-        )}
+      <div className="px-4 pb-8 md:px-6">
+        <Footer />
       </div>
-
-      <Footer />
-    </main>
+    </div>
   )
 }

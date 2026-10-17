@@ -3,17 +3,17 @@ const REPO_URL = 'https://github.com/harmanpreet-sagar/F1-Battle-Detector-Summar
 
 export function Footer() {
   return (
-    <footer className="mx-auto mt-12 flex max-w-7xl flex-wrap items-center justify-between gap-3 border-t border-gray-800 pt-4 text-xs text-gray-500">
+    <footer className="mx-auto mt-12 flex max-w-[1360px] flex-wrap items-center justify-between gap-3 border-t border-ink-600 pt-4 text-xs text-mute">
       <span>
         Unofficial. Not associated with Formula 1. Data:{' '}
-        <a href="https://openf1.org" className="underline hover:text-gray-300" target="_blank" rel="noreferrer">
+        <a href="https://openf1.org" className="underline hover:text-white" target="_blank" rel="noreferrer">
           OpenF1
         </a>
         .
       </span>
       <a
         href={REPO_URL}
-        className="inline-flex items-center gap-1.5 hover:text-gray-300"
+        className="inline-flex items-center gap-1.5 hover:text-white"
         target="_blank"
         rel="noreferrer"
       >

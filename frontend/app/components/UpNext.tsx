@@ -11,8 +11,8 @@ export function UpNext({ race, currentSessionKey }: UpNextProps) {
   const repeat = race.session_key === currentSessionKey
 
   return (
-    <div className="mt-8 rounded-lg border border-gray-700 px-4 py-3 text-sm text-gray-400">
-      <span className="mr-2 font-semibold uppercase tracking-wide text-gray-300">Up next</span>
+    <div className="rounded-[10px] border border-ink-600 px-4 py-3 text-sm text-mute-soft">
+      <span className="mr-2 font-display font-bold uppercase tracking-[0.08em] text-mute-strong">Up next</span>
       {repeat ? 'This race again, from lights out' : `${race.year ?? ''} ${race.meeting_name}`.trim()}
     </div>
   )

@@ -1,123 +1,185 @@
 /**
- * Card displaying a single battle between two drivers.
+ * A battle between two drivers. The top battle gets the featured card - big
+ * gap, wide trend, stat tiles and the score's working - and the rest get a
+ * compact card.
  */
-import type { Battle, Tyre } from '../types/api'
+import type { Battle } from '../types/api'
+import { closingLabel, formatClosing, formatPace, teamColour, trendDelta, tyreShort } from '../lib/format'
+import { IntensityTag } from './IntensityTag'
+import { ScoreBreakdown } from './ScoreBreakdown'
 import { Sparkline } from './Sparkline'
+import { TyreFromBattle } from './TyreBadge'
 
 interface BattleCardProps {
   battle: Battle
-  showSparkline?: boolean
+  variant?: 'featured' | 'compact'
   /** Under SC, VSC or a red flag: shown, but visibly not a fight. */
   muted?: boolean
 }
 
-const COMPOUNDS: Record<string, { letter: string; className: string }> = {
-  SOFT: { letter: 'S', className: 'border-red-500 text-red-400' },
-  MEDIUM: { letter: 'M', className: 'border-yellow-400 text-yellow-300' },
-  HARD: { letter: 'H', className: 'border-gray-200 text-gray-100' },
-  INTERMEDIATE: { letter: 'I', className: 'border-green-500 text-green-400' },
-  WET: { letter: 'W', className: 'border-blue-500 text-blue-400' },
-}
-
-function TyreBadge({ tyre }: { tyre?: Tyre }) {
-  if (!tyre?.compound) return null
-  const compound = COMPOUNDS[tyre.compound] ?? { letter: '?', className: 'border-gray-500 text-gray-400' }
+function Side({ battle, side, large }: { battle: Battle; side: 'chaser' | 'ahead'; large: boolean }) {
+  const position = side === 'chaser' ? battle.chaser_position : battle.ahead_position
+  const acronym = side === 'chaser' ? battle.chaser_acronym : battle.ahead_acronym
+  const name = side === 'chaser' ? battle.chaser_name : battle.ahead_name
+  const team = side === 'chaser' ? battle.chaser_team : battle.ahead_team
+  const colour = side === 'chaser' ? battle.chaser_team_colour : battle.ahead_team_colour
+  const tyre = side === 'chaser' ? battle.chaser_tyre : battle.ahead_tyre
 
   return (
-    <span className="inline-flex items-center gap-1 text-xs text-gray-400" title={`${tyre.compound}, ${tyre.age_laps ?? '?'} laps`}>
-      <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full border-2 font-bold ${compound.className}`}>
-        {compound.letter}
-      </span>
-      {tyre.age_laps !== null && <span>{tyre.age_laps} laps</span>}
-    </span>
-  )
-}
-
-interface DriverProps {
-  position: number
-  acronym?: string | null
-  name?: string
-  team?: string
-  colour?: string | null
-  tyre?: Tyre
-}
-
-function Driver({ position, acronym, name, team, colour, tyre }: DriverProps) {
-  return (
-    <div className="flex items-center gap-3">
+    <div className="flex items-center gap-2.5">
       <span
-        className="h-10 w-1.5 rounded-full"
-        style={{ backgroundColor: colour ? `#${colour}` : '#4b5563' }}
+        className={`${large ? 'h-12 w-1.5' : 'h-7 w-1'} shrink-0 rounded-full`}
+        style={{ backgroundColor: teamColour(colour) }}
         aria-hidden
       />
-      <div>
-        <div className="flex items-baseline gap-2">
-          <span className="text-sm text-gray-400">P{position}</span>
-          <span className="text-xl font-bold" title={name}>{acronym || name || '?'}</span>
-        </div>
-        <div className="flex items-center gap-3">
-          {team && <span className="text-xs text-gray-500">{team}</span>}
-          <TyreBadge tyre={tyre} />
+      <div className="min-w-0">
+        {large && (
+          <div className="truncate font-mono text-[13px] text-mute">
+            P{position}
+            {team && ` · ${team}`}
+          </div>
+        )}
+        <div className="flex items-center gap-2">
+          <span
+            className={`font-display font-extrabold leading-none ${large ? 'text-[40px]' : 'text-[26px]'}`}
+            title={name}
+          >
+            {acronym || name || '?'}
+          </span>
+          {large && <TyreFromBattle tyre={tyre} showAge />}
         </div>
       </div>
     </div>
   )
 }
 
-export function BattleCard({ battle, showSparkline = true, muted = false }: BattleCardProps) {
-  const intensityColor = battle.intensity === 'HOT' ? 'bg-red-600' : 'bg-orange-600'
+function Pair({ battle, large }: { battle: Battle; large: boolean }) {
+  return (
+    <div className={`flex flex-wrap items-center ${large ? 'gap-x-5 gap-y-2' : 'gap-x-2.5 gap-y-1'}`}>
+      <Side battle={battle} side="chaser" large={large} />
+      <svg width={large ? 28 : 18} height="16" viewBox="0 0 28 16" role="img" aria-label="chasing" className="shrink-0">
+        <path d="M2 8h22M18 2l6 6-6 6" fill="none" stroke="#8A8A99" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      <Side battle={battle} side="ahead" large={large} />
+    </div>
+  )
+}
+
+function Delta({ battle }: { battle: Battle }) {
+  const delta = trendDelta(battle.trend_gap_s)
+  if (delta === null) return null
+  const closing = delta < 0
+  return (
+    <div className={`font-mono text-[13px] tnum ${closing ? 'text-closing' : 'text-opening'}`}>
+      {closing ? '−' : '+'}
+      {Math.abs(delta).toFixed(2)}s over {battle.trend_gap_s.length} readings
+    </div>
+  )
+}
+
+function Flags({ battle }: { battle: Battle }) {
+  const notes = [
+    battle.flags.pit_window_active && 'Pit window',
+    battle.flags.data_quality_warning && 'Stale timing data',
+  ].filter(Boolean) as string[]
+  if (notes.length === 0) return null
+  return (
+    <div className="flex flex-wrap gap-2">
+      {notes.map((n) => (
+        <span key={n} className="rounded border border-ink-500 px-2 py-0.5 text-xs text-mute-strong">
+          {n}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function FeaturedCard({ battle }: { battle: Battle }) {
+  const chaserTyre = tyreShort(battle.chaser_tyre)
+  const aheadTyre = tyreShort(battle.ahead_tyre)
+  const stats = [
+    { label: closingLabel(battle.closing_rate_s_per_s), value: formatClosing(battle.closing_rate_s_per_s) },
+    { label: 'Pace Δ', value: formatPace(battle.pace_delta_s_per_lap) },
+    { label: 'Tyres', value: chaserTyre && aheadTyre ? `${chaserTyre} vs ${aheadTyre}` : '–' },
+    { label: 'Score', value: battle.battle_score.toFixed(2) },
+  ]
 
   return (
-    <div
-      className={`bg-gray-800 rounded-lg p-4 mb-4 border border-gray-700 transition-opacity ${muted ? 'opacity-40 grayscale' : ''}`}
-      aria-disabled={muted}
+    <>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <Pair battle={battle} large />
+        <div className="flex items-center gap-4">
+          <IntensityTag intensity={battle.intensity} size="lg" />
+          <div className="text-right">
+            <div className="font-mono text-[56px] font-bold leading-none tnum">
+              {battle.gap_now_s.toFixed(2)}
+              <span className="text-2xl text-mute">s</span>
+            </div>
+            <Delta battle={battle} />
+          </div>
+        </div>
+      </div>
+
+      {battle.trend_gap_s.length > 1 && <Sparkline data={battle.trend_gap_s} height={120} showOneSecond />}
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {stats.map((s) => (
+          <div key={s.label} className="rounded-md border border-ink-600 bg-ink-950/60 p-3">
+            <div className="font-display text-[13px] font-semibold uppercase tracking-[0.08em] text-mute">{s.label}</div>
+            <div className="mt-1 font-mono text-xl font-bold tnum">{s.value}</div>
+          </div>
+        ))}
+      </div>
+
+      <p className="text-base leading-relaxed text-mute-soft">{battle.explanation}</p>
+      <Flags battle={battle} />
+
+      {battle.score_breakdown && <ScoreBreakdown battle={battle} breakdown={battle.score_breakdown} />}
+    </>
+  )
+}
+
+function CompactCard({ battle }: { battle: Battle }) {
+  const chaserTyre = tyreShort(battle.chaser_tyre)
+  const aheadTyre = tyreShort(battle.ahead_tyre)
+  const line = [
+    `${closingLabel(battle.closing_rate_s_per_s)} ${formatClosing(battle.closing_rate_s_per_s)}`,
+    formatPace(battle.pace_delta_s_per_lap),
+    chaserTyre && aheadTyre ? `${chaserTyre} vs ${aheadTyre}` : null,
+  ].filter(Boolean)
+
+  return (
+    <>
+      <div className="flex items-center justify-between gap-3">
+        <Pair battle={battle} large={false} />
+        <IntensityTag intensity={battle.intensity} />
+      </div>
+      <div className="flex items-end justify-between gap-3">
+        <div className="font-mono text-[34px] font-bold leading-none tnum">
+          {battle.gap_now_s.toFixed(2)}
+          <span className="text-base text-mute">s</span>
+        </div>
+        <div className="w-40">
+          <Sparkline data={battle.trend_gap_s} height={40} />
+        </div>
+      </div>
+      <div className="font-mono text-[13px] text-mute-strong tnum">
+        P{battle.chaser_position} vs P{battle.ahead_position} · {line.join(' · ')}
+      </div>
+      <Flags battle={battle} />
+    </>
+  )
+}
+
+export function BattleCard({ battle, variant = 'compact', muted = false }: BattleCardProps) {
+  const featured = variant === 'featured'
+  return (
+    <article
+      className={`flex flex-col rounded-[10px] border border-ink-500 bg-ink-800 transition-opacity ${
+        featured ? 'gap-5 p-6' : 'gap-3 p-[18px]'
+      } ${muted ? 'opacity-40 grayscale' : ''}`}
     >
-      <div className="flex flex-wrap items-center justify-between gap-4 mb-3">
-        <div className="flex flex-wrap items-center gap-4">
-          <Driver
-            position={battle.chaser_position}
-            acronym={battle.chaser_acronym}
-            name={battle.chaser_name}
-            team={battle.chaser_team}
-            colour={battle.chaser_team_colour}
-            tyre={battle.chaser_tyre}
-          />
-          <span className="text-gray-500" aria-label="chasing">→</span>
-          <Driver
-            position={battle.ahead_position}
-            acronym={battle.ahead_acronym}
-            name={battle.ahead_name}
-            team={battle.ahead_team}
-            colour={battle.ahead_team_colour}
-            tyre={battle.ahead_tyre}
-          />
-        </div>
-        <div className="flex items-center gap-3">
-          <span className={`${intensityColor} px-2 py-1 rounded text-xs font-semibold`}>
-            {battle.intensity}
-          </span>
-          <span className="text-2xl font-mono">{battle.gap_now_s.toFixed(2)}s</span>
-        </div>
-      </div>
-
-      <div className="text-sm text-gray-400 mb-2">
-        {battle.explanation}
-      </div>
-
-      <div className="flex gap-4 text-xs text-gray-500">
-        {battle.closing_rate_s_per_s !== null && battle.closing_rate_s_per_s !== undefined && (
-          <span>Closing: {battle.closing_rate_s_per_s.toFixed(2)}s/s</span>
-        )}
-        {battle.pace_delta_s_per_lap !== null && battle.pace_delta_s_per_lap !== undefined && (
-          <span>Pace: {battle.pace_delta_s_per_lap.toFixed(2)}s/lap</span>
-        )}
-      </div>
-
-      {showSparkline && battle.trend_gap_s.length > 0 && (
-        <div className="mt-4">
-          <Sparkline data={battle.trend_gap_s} />
-        </div>
-      )}
-    </div>
+      {featured ? <FeaturedCard battle={battle} /> : <CompactCard battle={battle} />}
+    </article>
   )
 }

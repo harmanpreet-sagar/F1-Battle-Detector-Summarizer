@@ -5,8 +5,8 @@
 import type { TrackStatus } from '../types/api'
 
 const BANNERS: Partial<Record<TrackStatus, { text: string; className: string }>> = {
-  sc: { text: 'Safety Car', className: 'bg-yellow-500 text-black' },
-  vsc: { text: 'Virtual Safety Car', className: 'bg-yellow-500 text-black' },
+  sc: { text: 'Safety Car', className: 'bg-sc text-ink-950' },
+  vsc: { text: 'Virtual Safety Car', className: 'bg-sc text-ink-950' },
   red: { text: 'Red Flag', className: 'bg-red-700 text-white' },
 }
 
@@ -24,9 +24,9 @@ export function TrackStatusBanner({ status, stoppage }: TrackStatusBannerProps) 
   if (!banner) return null
 
   return (
-    <div role="status" className={`${banner.className} mb-6 rounded-lg px-4 py-3 font-bold uppercase tracking-wide`}>
+    <div role="status" className={`${banner.className} rounded-lg px-4 py-3 font-display text-lg font-extrabold uppercase tracking-[0.08em]`}>
       {banner.text}
-      <span className="ml-3 text-sm font-normal normal-case">
+      <span className="ml-3 font-sans text-sm font-medium normal-case tracking-normal">
         {stoppage ? 'Race suspended. Fast-forwarding to the restart.' : 'Battles paused until the restart.'}
       </span>
     </div>

@@ -17,6 +17,8 @@ export interface Battle {
   closing_rate_s_per_s?: number
   pace_delta_s_per_lap?: number
   battle_score: number
+  /** How battle_score was reached; absent from older backends. */
+  score_breakdown?: ScoreBreakdown | null
   intensity: BattleIntensity
   explanation: string
   trend_gap_s: number[]
@@ -34,6 +36,20 @@ export interface Battle {
   ahead_acronym?: string | null
   ahead_team_colour?: string | null
   ahead_tyre?: Tyre
+}
+
+/**
+ * The battle score's working. gap + closing + pace = raw (weights 0.5, 0.3,
+ * 0.2 already applied); score = raw * multiplier, where multiplier is the
+ * product of the yellow-flag, pit-window and data-quality penalties.
+ */
+export interface ScoreBreakdown {
+  gap: number
+  closing: number
+  pace: number
+  raw: number
+  multiplier: number
+  score: number
 }
 
 export interface Tyre {
@@ -68,6 +84,9 @@ export interface DriverState {
   full_name: string
   team_name: string
   position: number
+  name_acronym?: string | null
+  /** Hex without '#', as OpenF1 gives it. */
+  team_colour?: string | null
   last_lap_time_s?: number
   gap_to_leader_s?: number
   gap_to_ahead_s?: number
@@ -75,6 +94,7 @@ export interface DriverState {
   tire_age_laps?: number
   pit_stops_count: number
   updated_at: string
+  gap_updated_at?: string | null
   data_confidence: DataConfidence
 }
 
@@ -119,4 +139,12 @@ export interface ReplaySession {
   bytes: number
   schema_version: number
   in_playlist: boolean
+}
+
+/** GET /api/state/latest */
+export interface LatestState {
+  drivers: DriverState[]
+  count: number
+  updated_at?: string | null
+  message?: string
 }
