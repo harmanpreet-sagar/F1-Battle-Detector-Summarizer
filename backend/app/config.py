@@ -140,7 +140,7 @@ class Config:
         int(key) for key in os.getenv("REPLAY_PLAYLIST", "").replace(" ", "").split(",") if key
     ]
     # Race seconds per wall second. The plan's settings are 1, 5, 10 and 20.
-    REPLAY_SPEED: float = float(os.getenv("REPLAY_SPEED", "1"))
+    REPLAY_SPEED: float = float(os.getenv("REPLAY_SPEED", "5"))
     # The wall-clock instant the playlist started. Every request and every
     # instance agrees on it, so all viewers see the same moment of the same
     # race - a per-process anchor would put each cold start at lap 1.

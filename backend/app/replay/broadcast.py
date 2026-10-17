@@ -244,6 +244,7 @@ class Broadcast:
             session_status="started",
             circuit_short_name=race["circuit"],
             meeting_name=race["meeting_name"],
+            year=manifest.year,
             current_lap=replay.lap_at(position.race_time),
             total_laps=replay.total_laps,
             track_status=replay.track_status_at(position.race_time),
@@ -259,6 +260,8 @@ class Broadcast:
         return {
             **race_summary(replay),
             "race_time": position.race_time.isoformat(),
+            # Since lights out, which is what the header's race clock shows.
+            "elapsed_s": round((position.race_time - replay.start).total_seconds(), 1),
             "lap": replay.lap_at(position.race_time),
             "total_laps": replay.total_laps,
             "track_status": replay.track_status_at(position.race_time),

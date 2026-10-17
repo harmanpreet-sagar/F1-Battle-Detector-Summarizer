@@ -85,6 +85,7 @@ class LiveSource:
                         drivers_info=drivers_info,
                         laps=cached_laps,
                         track_status=session.track_status,
+                        season=session.year,
                     )
 
                 retry_delay = config.POLL_POSITIONS_INTERVAL_S

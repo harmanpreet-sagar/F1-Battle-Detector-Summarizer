@@ -52,6 +52,13 @@ class TickData:
     # in the running order for the rest of the race, inventing battles
     # against a car that is in the garage.
     retired: FrozenSet[int] = frozenset()
+    # Replay's too, from /stints and /pit, which live polling does not fetch:
+    # each driver's current stint row and pit stops so far.
+    stints: Dict[int, Dict] = field(default_factory=dict)
+    pit_stops: Dict[int, int] = field(default_factory=dict)
+    # The championship year, which decides the rules the wording describes:
+    # DRS until 2025, Overtake Mode from 2026.
+    season: Optional[int] = None
 
 
 class RacePipeline:
@@ -69,6 +76,7 @@ class RacePipeline:
         self.state = StateManager()
         self.detector = BattleDetector()
         self._track_status: Optional[str] = None
+        self._season: Optional[int] = None
 
     # -- writing --------------------------------------------------------
 
@@ -77,6 +85,8 @@ class RacePipeline:
         if tick.reset:
             self.reset()
         self._track_status = tick.track_status
+        if tick.season is not None:
+            self._season = tick.season
 
         for driver_number in tick.retired:
             self.state.drop_driver(driver_number)
@@ -92,6 +102,8 @@ class RacePipeline:
                 tick.drivers_info,
                 intervals=tick.intervals,
                 laps=tick.laps,
+                stints=tick.stints,
+                pit_stops=tick.pit_stops,
                 now=self.clock.now(),
             )
 
@@ -117,6 +129,7 @@ class RacePipeline:
             driver_histories,
             self._track_status,
             now=self.clock.now(),
+            season=self._season,
         )
         logger.debug(
             f"[{self.name}] {len(battles)} battles shown, "
@@ -135,6 +148,7 @@ class RacePipeline:
         self.state.clear()
         self.detector.reset()
         self._track_status = None
+        self._season = None
 
     # -- read-only views used by the API --------------------------------
 

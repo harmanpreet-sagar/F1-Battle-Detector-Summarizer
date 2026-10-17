@@ -5,7 +5,7 @@
 export type DataConfidence = 'high' | 'medium' | 'low'
 export type BattleIntensity = 'HOT' | 'WATCH' | 'NONE'
 export type TrackStatus = 'green' | 'yellow' | 'red' | 'sc' | 'vsc'
-export type ConnectionStatus = 'live' | 'delayed' | 'reconnecting'
+export type ConnectionStatus = 'live' | 'delayed' | 'reconnecting' | 'replay'
 
 export interface Battle {
   battle_id: string
@@ -23,6 +23,23 @@ export interface Battle {
   trend_timestamps: string[]
   duration_updates: number
   flags: BattleFlags
+  // Added by /api/battles/top for display; absent when the driver is unknown.
+  chaser_name?: string
+  chaser_team?: string
+  chaser_acronym?: string | null
+  chaser_team_colour?: string | null
+  chaser_tyre?: Tyre
+  ahead_name?: string
+  ahead_team?: string
+  ahead_acronym?: string | null
+  ahead_team_colour?: string | null
+  ahead_tyre?: Tyre
+}
+
+export interface Tyre {
+  compound: string | null
+  age_laps: number | null
+  pit_stops: number
 }
 
 export interface BattleFlags {
@@ -38,6 +55,7 @@ export interface SessionStatus {
   session_status: 'started' | 'finished' | 'aborted'
   circuit_short_name: string
   meeting_name: string
+  year?: number
   current_lap?: number
   total_laps?: number
   track_status?: TrackStatus
@@ -77,6 +95,8 @@ export interface ReplayStatus {
   circuit: string | null
   year: number | null
   race_time: string | null
+  /** Race seconds since lights out. */
+  elapsed_s: number | null
   lap: number | null
   total_laps: number | null
   track_status: TrackStatus | null

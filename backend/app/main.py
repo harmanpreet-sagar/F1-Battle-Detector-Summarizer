@@ -247,7 +247,7 @@ async def get_replay_status():
             "mode": config.DATA_MODE,
             **{field: None for field in (
                 "session_key", "meeting_name", "circuit", "year", "race_time",
-                "lap", "total_laps", "track_status", "stoppage", "speed",
+                "elapsed_s", "lap", "total_laps", "track_status", "stoppage", "speed",
                 "progress_pct", "next_race",
             )},
         }
@@ -369,13 +369,18 @@ async def get_top_battles(k: int = 5, min_intensity: str = "WATCH"):
         chaser_info = pipeline.driver_info(battle.chaser_driver_number)
         ahead_info = pipeline.driver_info(battle.ahead_driver_number)
 
-        if chaser_info:
-            battle_dict["chaser_name"] = chaser_info["full_name"]
-            battle_dict["chaser_team"] = chaser_info["team_name"]
-
-        if ahead_info:
-            battle_dict["ahead_name"] = ahead_info["full_name"]
-            battle_dict["ahead_team"] = ahead_info["team_name"]
+        for side, info in (("chaser", chaser_info), ("ahead", ahead_info)):
+            if not info:
+                continue
+            battle_dict[f"{side}_name"] = info["full_name"]
+            battle_dict[f"{side}_team"] = info["team_name"]
+            battle_dict[f"{side}_acronym"] = info["name_acronym"]
+            battle_dict[f"{side}_team_colour"] = info["team_colour"]
+            battle_dict[f"{side}_tyre"] = {
+                "compound": info["tire_compound"],
+                "age_laps": info["tire_age_laps"],
+                "pit_stops": info["pit_stops_count"],
+            }
 
         enriched_battles.append(battle_dict)
 

@@ -364,3 +364,50 @@ class _NoHealth:
 
     def record_successful_position_poll(self):
         pass
+
+
+# --------------------------------------------------------------------------
+# What the cards show (1.6)
+# --------------------------------------------------------------------------
+
+def _state_of(driver, until_tick):
+    replay = excerpt_replay()
+    pipeline = play(RacePipeline(ReplayClock(replay.start)), replay, 0, until_tick)
+    return pipeline.state.get_current_state(driver)
+
+
+def test_tyres_come_from_the_stints():
+    """Car 27 starts on softs and pits at the end of lap 5 for mediums."""
+    replay = excerpt_replay()
+    pit_at = parse_openf1_timestamp(excerpt_store().load(9928).rows("pit")[0]["date"])
+    before = replay.tick_at(pit_at) - 30
+    after = replay.tick_count - 1
+
+    early = _state_of(27, before)
+    late = _state_of(27, after)
+
+    assert early.tire_compound == "SOFT"
+    assert early.pit_stops_count == 0
+    assert late.tire_compound == "MEDIUM"
+    assert late.pit_stops_count == 1
+    # Fitted new at the start of lap 6, so its age is the laps run since.
+    completed = replay.cursor().tick(after).laps[27][-1]["lap_number"]
+    assert late.tire_age_laps == completed + 1 - 6
+
+
+def test_the_card_knows_the_cars_acronym_and_colour():
+    state = _state_of(1, 50)
+
+    assert state.name_acronym == "VER"
+    assert state.team_colour == "4781D7"
+
+
+def test_the_season_reaches_the_wording():
+    """2025 has DRS; the explanation must say so."""
+    replay = excerpt_replay()
+    pipeline = play(RacePipeline(ReplayClock(replay.start)), replay)
+    sub_second = [b for b in pipeline.detector.latest_battles if b.gap_now_s < 1.0]
+
+    assert pipeline._season == 2025
+    for battle in sub_second:
+        assert "Within DRS range" in battle.explanation

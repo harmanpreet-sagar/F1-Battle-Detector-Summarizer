@@ -12,6 +12,9 @@ class DriverState(BaseModel):
     full_name: str
     team_name: str
     position: int
+    name_acronym: Optional[str] = None
+    # Hex without '#', as OpenF1's /drivers gives it, e.g. "E80020"
+    team_colour: Optional[str] = None
     last_lap_time_s: Optional[float] = None
     gap_to_leader_s: Optional[float] = None
     gap_to_ahead_s: Optional[float] = None
@@ -64,6 +67,7 @@ class SessionStatus(BaseModel):
     session_status: Literal["started", "finished", "aborted"]
     circuit_short_name: str
     meeting_name: str
+    year: Optional[int] = None
     current_lap: Optional[int] = None
     total_laps: Optional[int] = None
     track_status: Optional[Literal["green", "yellow", "red", "sc", "vsc"]] = None

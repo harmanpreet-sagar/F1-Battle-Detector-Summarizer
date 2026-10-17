@@ -55,3 +55,6 @@ coverage/
 
 # Docker
 *.pid
+
+# TypeScript incremental build cache, written by tsc --noEmit
+*.tsbuildinfo

@@ -496,3 +496,16 @@ def test_pit_window_flag_is_still_populated(detector):
     histories[44][-2].gap_to_ahead_s = 0.35
 
     assert detect_pit_window(histories[44]) is True
+
+
+@pytest.mark.parametrize("season,expected", [
+    (2023, "Within DRS range"),
+    (2025, "Within DRS range"),
+    (2026, "Within 1s (Overtake Mode range)"),
+    # Unknown means today's rules, which have no DRS.
+    (None, "Within 1s (Overtake Mode range)"),
+])
+def test_sub_second_wording_follows_the_rules_of_the_season(season, expected):
+    from app.battle import within_one_second
+
+    assert within_one_second(season) == expected

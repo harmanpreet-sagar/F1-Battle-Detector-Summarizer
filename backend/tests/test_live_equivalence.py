@@ -79,7 +79,7 @@ class FakeSessions:
         return SessionStatus(
             session_key=self._replay.session_key, session_name="Race", session_type="Race",
             session_status="started", circuit_short_name="Hungaroring",
-            meeting_name="Hungarian Grand Prix",
+            meeting_name="Hungarian Grand Prix", year=2025,
             track_status=self._replay.track_status_at(self._clock.now()),
             gmt_offset="+00:00", updated_at=self._clock.now(),
         )

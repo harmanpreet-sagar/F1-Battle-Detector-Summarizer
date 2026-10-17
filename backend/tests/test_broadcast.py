@@ -306,7 +306,7 @@ def test_endpoints_serve_the_replay_without_a_poll_loop(stateless_replay, monkey
 
 
 REPLAY_STATUS_FIELDS = {
-    "mode", "session_key", "meeting_name", "circuit", "year", "race_time", "lap",
+    "mode", "session_key", "meeting_name", "circuit", "year", "race_time", "elapsed_s", "lap",
     "total_laps", "track_status", "stoppage", "speed", "progress_pct", "next_race",
 }
 
@@ -385,3 +385,19 @@ def test_health_reports_the_replay_position(stateless_replay, monkeypatch):
     assert health["replay"]["race_time"] == stateless_replay.locate(moment).race_time.isoformat()
     assert health["replay"]["schema_version"] == SCHEMA_VERSION
     assert health["replay"]["manifest_schema_version"] == SCHEMA_VERSION
+
+
+def test_battle_cards_name_both_cars_and_their_tyres(stateless_replay, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app import main
+
+    monkeypatch.setattr(main, "utcnow", lambda: moment_of(stateless_replay, 200))
+    battles = TestClient(main.app).get("/api/battles/top?k=5").json()["battles"]
+
+    assert battles
+    for battle in battles:
+        for side in ("chaser", "ahead"):
+            assert len(battle[f"{side}_acronym"]) == 3
+            assert len(battle[f"{side}_team_colour"]) == 6
+            assert battle[f"{side}_tyre"]["compound"] in ("SOFT", "MEDIUM", "HARD")
+            assert battle[f"{side}_tyre"]["age_laps"] >= 0

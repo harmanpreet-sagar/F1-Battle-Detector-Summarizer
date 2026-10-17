@@ -24,6 +24,13 @@ class TrackedBattle:
     distinct_samples: int
 
 
+def within_one_second(season: Optional[int]) -> str:
+    """What a sub-second gap buys the chaser under that year's rules."""
+    if season is not None and season < 2026:
+        return "Within DRS range"
+    return "Within 1s (Overtake Mode range)"
+
+
 def calculate_battle_score(
     gap_s: float,
     closing_rate: Optional[float],
@@ -192,6 +199,7 @@ class BattleDetector:
         track_status: Optional[str] = None,
         *,
         now: datetime,
+        season: Optional[int] = None,
     ) -> List[Battle]:
         """
         Detect battles between adjacent drivers and cache the result.
@@ -207,10 +215,13 @@ class BattleDetector:
                 seconds at 10x speed and never fire at all in a batch run that
                 processes thousands of ticks in a few wall seconds.
 
+            season: Championship year, for the wording only. 2026 dropped
+                DRS for Overtake Mode; unknown means the current rules.
+
         Returns:
             List of Battle objects sorted by score (highest first).
         """
-        battles = self._detect(driver_states, driver_histories, track_status, now)
+        battles = self._detect(driver_states, driver_histories, track_status, now, season)
         self._latest = battles
         self._detected_at = now
         return list(battles)
@@ -221,6 +232,7 @@ class BattleDetector:
         driver_histories: Dict[int, List[DriverState]],
         track_status: Optional[str],
         now: datetime,
+        season: Optional[int] = None,
     ) -> List[Battle]:
         if not driver_states:
             logger.warning("detect: No driver states provided")
@@ -320,7 +332,7 @@ class BattleDetector:
             if pace_delta is not None and pace_delta < 0:
                 explanation_parts.append(f"{abs(pace_delta):.2f}s/lap quicker")
             if gap < 1.0:
-                explanation_parts.append("Within DRS range")
+                explanation_parts.append(within_one_second(season))
             if flags.pit_window_active:
                 explanation_parts.append("Pit window active")
             if not explanation_parts:

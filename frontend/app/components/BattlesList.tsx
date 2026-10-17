@@ -6,13 +6,14 @@ import { BattleCard } from './BattleCard'
 
 interface BattlesListProps {
   battles: Battle[]
+  muted?: boolean
 }
 
-export function BattlesList({ battles }: BattlesListProps) {
+export function BattlesList({ battles, muted = false }: BattlesListProps) {
   if (battles.length === 0) {
     return (
       <div className="text-gray-400 text-center py-8">
-        No active battles at the moment
+        {muted ? 'No battles while the field is neutralised' : 'No active battles at the moment'}
       </div>
     )
   }
@@ -20,7 +21,7 @@ export function BattlesList({ battles }: BattlesListProps) {
   return (
     <div>
       {battles.map((battle) => (
-        <BattleCard key={battle.battle_id} battle={battle} />
+        <BattleCard key={battle.battle_id} battle={battle} muted={muted} />
       ))}
     </div>
   )

@@ -317,7 +317,7 @@ The window must be at least `BATTLE_GAP_TREND_WINDOW * 3` ticks, or no battle ac
 
 The container path (`docker-compose.yml`, `uvicorn`) keeps the long-running loop and accumulates state as it does today. Both paths must produce the same battles — see the equivalence test in 1.8.
 
-**Built** — `app/replay/broadcast.py`. Settings: `REPLAY_PLAYLIST`, `REPLAY_SPEED` (default 1), `REPLAY_EPOCH`, `REPLAY_WINDOW_TICKS` (48), `REPLAY_QUIET_PLAYBACK_S` (5). `ReplaySource` follows the same schedule on the container path, so a container and a function show the same moment.
+**Built** — `app/replay/broadcast.py`. Settings: `REPLAY_PLAYLIST`, `REPLAY_SPEED` (default 5; 1x was too slow to watch), `REPLAY_EPOCH`, `REPLAY_WINDOW_TICKS` (48), `REPLAY_QUIET_PLAYBACK_S` (5). `ReplaySource` follows the same schedule on the container path, so a container and a function show the same moment.
 
 - **A bare window is not enough.** Rebuilding only the last 48 ticks diverged from a continuous run: early in the window driver histories are short, pace delta reads the whole history, and the stability filter kept a battle the continuous run had already evicted. The rebuild now ingests `HISTORY_MAX_LEN` (60) ticks of history first without detecting, then detects the last 48.
 - **Stateless equivalence, measured** on the full Hungarian GP: the rebuild matches a pipeline that ran from lights out at **all 773 ticks sampled** (every 5th). The only difference is `duration_updates`, which counts within the window and so can only come out lower.
@@ -350,6 +350,16 @@ The container path (`docker-compose.yml`, `uvicorn`) keeps the long-running loop
 - **Battle cards:** driver acronyms, team names (colours if `/drivers` provides them), gap sparkline (existing `Sparkline.tsx`), explanation text (existing), and tyre compound and age from stints.
 - **"Up next"** strip showing the next race in the playlist.
 - **Footer disclaimer:** "Unofficial. Not associated with Formula 1. Data: OpenF1."
+
+**Built** — `ReplayHeader`, `TrackStatusBanner`, `UpNext` and `Footer` components, a `useReplayStatus` hook, and richer `BattleCard`s. Checked by screenshot against the backend in replay mode: "REPLAY · 2025 Hungarian Grand Prix · Lap 44/70 · 1x", a race clock, a progress bar, and cards reading "P15 GAS (Alpine, M 10 laps) → P14 BEA (Haas, H 12 laps) · Within DRS range".
+
+- **The top banner never says LIVE over a replay.** It compares data age against the wall clock, which is meaningless for a 2025 race, so in replay it reads "REPLAY · RECORDED RACE" and switches to "RECONNECTING" only when a request fails.
+- **The race clock** extrapolates between 2s polls at the broadcast's speed, so it ticks smoothly, and it holds during a compressed stoppage. `/api/replay/status` gained `elapsed_s` for it.
+- **Tyres come from replay only.** The cursor tracks each driver's current stint and pit count, `TickData` carries them, and `StateManager` works out tyre age as the age when fitted plus laps run on it. Live polling fetches neither endpoint, so live cards show no tyre.
+- **Team colours and acronyms** come from `/drivers` via new `DriverState.name_acronym` / `team_colour` fields. `/api/battles/top` adds `{side}_acronym`, `{side}_team_colour` and `{side}_tyre` for both cars.
+- **Era-aware wording** is decided in the backend: `TickData.season` reaches the detector, giving "Within DRS range" before 2026 and "Within 1s (Overtake Mode range)" from 2026 or when the season is unknown. Live gets the season from the session's `year`, which the live-equivalence test caught: without it, live and replay worded the same battle differently.
+- **Greyed battles** are rarely visible in practice, because the score is halved under SC/VSC/red and no battle clears the WATCH threshold. The banner is what viewers will actually see.
+- Noticed, not fixed: `trend_timestamps` on a battle repeat the position-row time rather than each gap sample's, so they are often identical. The sparkline ignores them, but Phase 2 shouldn't rely on them. This belongs to 1.11.
 
 ### 1.7 Deployment packaging for Vercel
 
@@ -763,7 +773,7 @@ F1-Battle-Detector-Summarizer/
 | `DATA_MODE` | `mock` | 0 |
 | `OPENF1_API_TOKEN` | unset (live mode needs it) | 0 |
 | `REPLAY_PLAYLIST` | curated session keys | 1 |
-| `REPLAY_SPEED` | `10` | 1 |
+| `REPLAY_SPEED` | `5` | 1 |
 | `REPLAY_EPOCH` | fixed ISO timestamp | 1 |
 | `REPLAY_WINDOW_TICKS` | `48` | 1 |
 | `DEMO_STATELESS` | `true` on Vercel, `false` for the container path | 1 |

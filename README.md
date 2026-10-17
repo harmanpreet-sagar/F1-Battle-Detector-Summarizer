@@ -303,7 +303,7 @@ Key environment variables (see `.env.example` files):
 - `REPLAY_QUIET_GAP_S` - Race-time silence that counts as a stoppage (default: 60s)
 - `REPLAY_PLAYLIST` - Session keys to play in order, comma separated (default:
   every cached race)
-- `REPLAY_SPEED` - Race seconds per wall second (default: 1)
+- `REPLAY_SPEED` - Race seconds per wall second (default: 5)
 - `REPLAY_EPOCH` - When the playlist started; fixes where the broadcast is
   (default: `2026-01-01T00:00:00+00:00`)
 - `REPLAY_WINDOW_TICKS` - Ticks detected per request on the stateless path
@@ -333,8 +333,9 @@ serves them over REST; the frontend renders them live.
 - ✅ Replay timeline builder
 - ✅ Replay playback (`DATA_MODE=replay`), container and serverless
 - ✅ `/api` routes, replay status and cached-race endpoints
-- ⬜ Replay UI and replay on the deployed demo - next
-- ✅ 276 backend tests
+- ✅ Replay UI: header, race clock, track status banner, tyres and team colours
+- ⬜ Replay on the deployed demo (1.7) - next
+- ✅ 284 backend tests
 
 Known limits:
 

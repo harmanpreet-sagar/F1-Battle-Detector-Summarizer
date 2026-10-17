@@ -149,6 +149,8 @@ class ReplayCursor:
         self._intervals: Dict[int, Event] = {}
         self._laps: Dict[int, Deque[Dict]] = {}
         self._retired: Set[int] = set()
+        self._stints: Dict[int, Dict] = {}
+        self._pit_stops: Dict[int, int] = {}
         self._track_status = replay.timeline.initial_track_status
         self._laps_snapshot: Dict[int, List[Dict]] = {}
 
@@ -180,6 +182,9 @@ class ReplayCursor:
             track_status=self._track_status,
             reset=reset,
             retired=retired,
+            stints={d: row for d, row in self._stints.items() if d not in retired},
+            pit_stops=dict(self._pit_stops),
+            season=self.replay.archive.manifest.year,
         )
 
     @property
@@ -208,6 +213,10 @@ class ReplayCursor:
             self._track_status = event.status
         elif kind == "retirement":
             self._retired.add(event.driver_number)
+        elif kind == "stint":
+            self._stints[event.driver_number] = event.row
+        elif kind == "pit":
+            self._pit_stops[event.driver_number] = self._pit_stops.get(event.driver_number, 0) + 1
 
     @staticmethod
     def _latest(table: Dict[int, Event], event: Event) -> None:

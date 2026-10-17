@@ -24,6 +24,12 @@ export function ConnectionStatus({ status }: ConnectionStatusProps) {
       text: 'RECONNECTING',
       icon: '🔴',
     },
+    // Never imply a replay is live.
+    replay: {
+      color: 'bg-gray-700',
+      text: 'REPLAY · RECORDED RACE',
+      icon: '⏵',
+    },
   }
 
   const config = statusConfig[status]
