@@ -110,6 +110,31 @@ class RaceIngestor:
             )
         return ordered[round_number - 1]
 
+    async def resolve_meeting_name(self, session: Dict) -> Optional[str]:
+        """
+        The Grand Prix's name, e.g. "Hungarian Grand Prix".
+
+        `sessions` rows carry the circuit but not the meeting, so the name
+        comes from `/meetings`: one more request per race, made only when the
+        session row lacks it. The short `meeting_name` is preferred over
+        `meeting_official_name` ("FORMULA 1 ... HUNGARIAN GRAND PRIX 2025"),
+        which is the sponsor's title rather than something a header can show.
+        A failure costs only the name: the race is replayable without it.
+        """
+        name = session.get("meeting_name") or session.get("meeting_official_name")
+        if name or session.get("meeting_key") is None:
+            return name
+        try:
+            meetings = await self._client.get_endpoint(
+                "meetings", {"meeting_key": session["meeting_key"]}
+            )
+        except OpenF1APIError as exc:
+            logger.warning("Meeting name unavailable: %s", exc)
+            return None
+        if not meetings:
+            return None
+        return meetings[0].get("meeting_name") or meetings[0].get("meeting_official_name")
+
     # -- the free-tier guard ---------------------------------------------
 
     def check_is_old_enough(self, session: Dict) -> None:
@@ -203,6 +228,13 @@ class RaceIngestor:
                     "Already cached (%d rows, %.1f MB). Use --force to refetch.",
                     existing.total_rows, existing.total_bytes / 1e6,
                 )
+                if not existing.meeting_name and not dry_run:
+                    # Races cached before ingest looked the name up. Filling
+                    # it in is one request and rewrites only the manifest.
+                    existing.meeting_name = await self.resolve_meeting_name(session)
+                    if existing.meeting_name:
+                        self._store.write_manifest(existing)
+                        logger.info("Backfilled meeting name: %s", existing.meeting_name)
                 return IngestResult(manifest=existing, fetched=False)
             logger.info("Cache is incomplete; refetching.")
 
@@ -220,9 +252,9 @@ class RaceIngestor:
             logger.info("Fetched rows are identical to the cache; nothing written.")
             return IngestResult(manifest=existing, fetched=False)
 
-        manifest = self._store.save(
-            self._manifest_for(session, year, round_number), fetched
-        )
+        manifest = self._manifest_for(session, year, round_number)
+        manifest.meeting_name = await self.resolve_meeting_name(session)
+        manifest = self._store.save(manifest, fetched)
         return IngestResult(manifest=manifest, fetched=True)
 
     def _manifest_for(self, session: Dict, year: Optional[int],
@@ -232,9 +264,7 @@ class RaceIngestor:
             year=session.get("year") or year,
             round=round_number,
             circuit=session.get("circuit_short_name"),
-            meeting_name=(
-                session.get("meeting_official_name") or session.get("meeting_name")
-            ),
+            meeting_name=session.get("meeting_name") or session.get("meeting_official_name"),
             session_name=session.get("session_name"),
             date_start=parse_openf1_timestamp(session.get("date_start")),
             date_end=parse_openf1_timestamp(session.get("date_end")),

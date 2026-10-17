@@ -27,7 +27,7 @@ seconds rather than as a frozen screen.
 from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence
 import logging
 
 from app.clock import ReplayClock, ensure_utc
@@ -236,20 +236,49 @@ class Broadcast:
         position = self.locate(now)
         replay = self.replay(position.index)
         manifest = replay.archive.manifest
-        circuit = manifest.circuit or "Unknown"
+        race = race_summary(replay)
         return SessionStatus(
             session_key=replay.session_key,
             session_name=manifest.session_name or "Race",
             session_type="Race",
             session_status="started",
-            circuit_short_name=circuit,
-            meeting_name=manifest.meeting_name or f"{manifest.year or ''} {circuit}".strip(),
+            circuit_short_name=race["circuit"],
+            meeting_name=race["meeting_name"],
             current_lap=replay.lap_at(position.race_time),
             total_laps=replay.total_laps,
             track_status=replay.track_status_at(position.race_time),
             gmt_offset=manifest.gmt_offset,
             updated_at=position.race_time,
         )
+
+
+    def status_at(self, now: datetime) -> Dict:
+        """What GET /api/replay/status reports: where the broadcast is."""
+        position = self.locate(now)
+        replay = self.replay(position.index)
+        return {
+            **race_summary(replay),
+            "race_time": position.race_time.isoformat(),
+            "lap": replay.lap_at(position.race_time),
+            "total_laps": replay.total_laps,
+            "track_status": replay.track_status_at(position.race_time),
+            "stoppage": position.stoppage,
+            "speed": self.speed,
+            "progress_pct": round(position.progress * 100, 1),
+            "next_race": race_summary(self.next_race(position)),
+        }
+
+
+def race_summary(replay: RaceReplay) -> Dict:
+    """A race's identity, as the API names it."""
+    manifest = replay.archive.manifest
+    circuit = manifest.circuit or "Unknown"
+    return {
+        "session_key": replay.session_key,
+        "meeting_name": manifest.meeting_name or f"{manifest.year or ''} {circuit}".strip(),
+        "circuit": circuit,
+        "year": manifest.year,
+    }
 
 
 _broadcast: Optional[Broadcast] = None

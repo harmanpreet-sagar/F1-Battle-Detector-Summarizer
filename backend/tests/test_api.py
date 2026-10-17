@@ -66,8 +66,8 @@ def test_battles_do_not_advance_on_repeated_reads():
     for poll in range(config.BATTLE_MIN_DURATION_UPDATES):
         seed_poll(pipeline, clock, poll)
 
-    first = client.get("/battles/top?k=5").json()
-    second = client.get("/battles/top?k=5").json()
+    first = client.get("/api/battles/top?k=5").json()
+    second = client.get("/api/battles/top?k=5").json()
 
     assert first["count"] == 1, "expected the seeded battle to have matured"
     assert first["battles"] == second["battles"]
@@ -80,7 +80,7 @@ def test_many_reads_do_not_mature_a_battle():
     seed_poll(pipeline, clock, 0)
 
     for _ in range(50):
-        assert client.get("/battles/top?k=5").json()["count"] == 0
+        assert client.get("/api/battles/top?k=5").json()["count"] == 0
 
 
 def test_detection_advances_only_when_the_poll_loop_runs():
@@ -89,13 +89,13 @@ def test_detection_advances_only_when_the_poll_loop_runs():
     for poll in range(config.BATTLE_MIN_DURATION_UPDATES):
         seed_poll(pipeline, clock, poll)
 
-    before = client.get("/battles/top?k=5").json()["battles"][0]["duration_updates"]
+    before = client.get("/api/battles/top?k=5").json()["battles"][0]["duration_updates"]
     for _ in range(20):
-        client.get("/battles/top?k=5")
-    unchanged = client.get("/battles/top?k=5").json()["battles"][0]["duration_updates"]
+        client.get("/api/battles/top?k=5")
+    unchanged = client.get("/api/battles/top?k=5").json()["battles"][0]["duration_updates"]
 
     seed_poll(pipeline, clock, config.BATTLE_MIN_DURATION_UPDATES)
-    after = client.get("/battles/top?k=5").json()["battles"][0]["duration_updates"]
+    after = client.get("/api/battles/top?k=5").json()["battles"][0]["duration_updates"]
 
     assert unchanged == before, "20 HTTP reads moved the counter"
     assert after == before + 1, "a real poll did not move the counter"
@@ -109,7 +109,7 @@ def test_detected_at_is_the_pipelines_clock_not_the_wall():
     client, pipeline, clock = fresh_client()
     seed_poll(pipeline, clock, 0)
 
-    detected_at = client.get("/battles/top?k=5").json()["detected_at"]
+    detected_at = client.get("/api/battles/top?k=5").json()["detected_at"]
 
     assert detected_at == poll_at(0).isoformat()
 
@@ -123,7 +123,7 @@ def test_endpoints_follow_the_active_pipeline():
     for poll in range(config.BATTLE_MIN_DURATION_UPDATES):
         seed_poll(live, clock, poll)
 
-    assert client.get("/battles/top?k=5").json()["count"] == 1
+    assert client.get("/api/battles/top?k=5").json()["count"] == 1
 
     # A second, empty pipeline registered alongside the first
     app.state.pipelines["replay"] = RacePipeline(
@@ -131,12 +131,58 @@ def test_endpoints_follow_the_active_pipeline():
     )
     app.state.active_pipeline = "replay"
     try:
-        empty = client.get("/battles/top?k=5").json()
+        empty = client.get("/api/battles/top?k=5").json()
         assert empty["count"] == 0
         assert empty["detected_at"] is None
-        assert client.get("/state/latest").json()["count"] == 0
+        assert client.get("/api/state/latest").json()["count"] == 0
     finally:
         app.state.active_pipeline = "live"
         app.state.pipelines.pop("replay", None)
 
-    assert client.get("/battles/top?k=5").json()["count"] == 1
+    assert client.get("/api/battles/top?k=5").json()["count"] == 1
+
+
+# --------------------------------------------------------------------------
+# The /api prefix (1.5)
+# --------------------------------------------------------------------------
+
+def test_every_route_lives_under_api():
+    """The container path serves the frontend at /, so nothing else may."""
+    paths = {route.path for route in app.routes if hasattr(route, "methods")}
+
+    assert paths, "no routes registered"
+    assert all(path.startswith("/api") for path in paths), sorted(paths)
+
+
+def test_the_old_unprefixed_paths_are_gone():
+    client, _, _ = fresh_client()
+
+    assert client.get("/battles/top").status_code == 404
+    assert client.get("/health").status_code == 404
+
+
+def test_the_docs_moved_with_the_api():
+    client, _, _ = fresh_client()
+
+    assert client.get("/api/docs").status_code == 200
+    assert client.get("/api/openapi.json").json()["info"]["title"] == "F1 Battle Detector API"
+
+
+def test_replay_status_outside_replay_mode_says_only_the_mode(monkeypatch):
+    monkeypatch.setattr(config, "DATA_MODE", "mock")
+    client, _, _ = fresh_client()
+
+    status = client.get("/api/replay/status").json()
+
+    assert status["mode"] == "mock"
+    assert status["session_key"] is None and status["next_race"] is None
+
+
+def test_health_reports_the_mode(monkeypatch):
+    monkeypatch.setattr(config, "DATA_MODE", "mock")
+    client, _, _ = fresh_client()
+
+    health = client.get("/api/health").json()
+
+    assert health["mode"] == "mock"
+    assert health["replay"] is None

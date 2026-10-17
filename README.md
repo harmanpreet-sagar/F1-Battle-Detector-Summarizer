@@ -53,7 +53,7 @@ docker-compose up --build
 
 # Backend: http://localhost:8000
 # Frontend: http://localhost:3000
-# API Docs: http://localhost:8000/docs
+# API Docs: http://localhost:8000/api/docs
 ```
 
 ### Option 2: Manual Setup
@@ -140,19 +140,30 @@ F1-Battle-Detector-Summarizer/
 
 ## API Endpoints
 
+Everything is under `/api`, docs included (`/api/docs`), so that the container
+path can serve the frontend at `/` from the same origin.
+
 ### Session
 
-- `GET /session/current` - Get current active session
+- `GET /api/session/current` - The current session. In replay, the race on air
+  with its real lap count (`current_lap` / `total_laps`)
 
-### Live Data
+### Race Data
 
-- `GET /state/latest` - All 20 drivers' current state
-- `GET /battles/top?k=5` - Top K battles ranked by score
-- `GET /drivers/{driver_number}/trend?points=10` - Gap trend for a driver
+- `GET /api/state/latest` - All 20 drivers' current state
+- `GET /api/battles/top?k=5` - Top K battles ranked by score
+- `GET /api/drivers/{driver_number}/trend?points=10` - Gap trend for a driver
+
+### Replay
+
+- `GET /api/replay/status` - Where the broadcast is: race, race time, lap, track
+  status, speed, progress and the next race. Outside replay mode only `mode` is set
+- `GET /api/replay/sessions` - Every cached race, from its manifest
 
 ### System
 
-- `GET /health` - Health check with detailed diagnostics
+- `GET /api/health` - Health check, plus the data mode and, in replay, the
+  broadcast position and cache schema version
 
 ## Testing
 
@@ -202,6 +213,10 @@ time with a pause between them - there is no published free-tier rate limit,
 so the strategy is to be polite. And it fetches each race exactly once: a
 second run over an already-cached race makes no requests at all, and `--force`
 re-fetches but still writes nothing if the data has not changed.
+
+The Grand Prix's name ("Hungarian Grand Prix") isn't on OpenF1's session
+rows, so ingest makes one `/meetings` request for it. Re-running ingest on a
+race cached without a name fills it in, without re-fetching anything else.
 
 `car_data` and `location` are deliberately not fetched. That telemetry is
 orders of magnitude larger than everything else combined and nothing reads it.
@@ -317,8 +332,9 @@ serves them over REST; the frontend renders them live.
 - ✅ Race ingest and cache (`python -m app.ingest`)
 - ✅ Replay timeline builder
 - ✅ Replay playback (`DATA_MODE=replay`), container and serverless
-- ⬜ Replay on the deployed demo, `/api` routes and replay UI - next
-- ✅ 262 backend tests
+- ✅ `/api` routes, replay status and cached-race endpoints
+- ⬜ Replay UI and replay on the deployed demo - next
+- ✅ 276 backend tests
 
 Known limits:
 

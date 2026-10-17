@@ -332,6 +332,15 @@ The container path (`docker-compose.yml`, `uvicorn`) keeps the long-running loop
 - `GET /api/session/current` gets real `current_lap` / `total_laps` (fixes B7). Current lap = max completed lap of the leader + 1; total laps from `session_result.number_of_laps` of the winner.
 - `GET /api/health` adds `mode`, replay position and data manifest version.
 
+**Built** — every route sits on one `APIRouter(prefix="/api")`, including the docs (`/api/docs`, `/api/openapi.json`) and Swagger's OAuth redirect, and a test fails if anything is registered outside `/api`. The frontend client, hooks and the compose healthcheck use the new paths, and `apiClient` has typed `getReplayStatus` / `getReplaySessions` for 1.6.
+
+- `/api/replay/status` also reports `stoppage` (inside a compressed red flag), which the 1.6 banner needs. Outside replay mode, every field but `mode` is null, so the frontend can call it unconditionally.
+- `/api/replay/sessions` reads every manifest in the cache and marks which races are `in_playlist`.
+- `/api/health` gains `mode` and, in replay, `{session_key, race_time, progress_pct, races, schema_version, manifest_schema_version}`.
+- B7 is fixed for replay and mock. Live still has no lap count: `session_result` only exists after the race, and live state carries no lap numbers. That's fine while live sits behind the paid tier.
+- **Meeting names come from `/meetings`.** OpenF1's `sessions` rows carry no meeting name, so 9928 was first cached with `null`, and the API fell back to "2025 Hungaroring". Ingest now makes one `/meetings` request per race when the session row lacks the name, and prefers the short `meeting_name` ("Hungarian Grand Prix") over the sponsor's official title. Re-running ingest on a cached race with no name fills it into the manifest without re-fetching any data, which is how 9928 got its name.
+- **Deploy both halves together.** The old unprefixed paths are gone, so a frontend built before this change can't talk to a backend built after it. Both Vercel projects deploy from the same push, which keeps the mismatch to the minute between their builds.
+
 ### 1.6 Frontend
 
 - **Header:** `REPLAY · 2025 <Grand Prix> · Lap 34/57 · 10x`, a race-time clock and a progress bar.

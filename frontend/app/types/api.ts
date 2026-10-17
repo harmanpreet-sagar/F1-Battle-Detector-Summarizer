@@ -59,3 +59,44 @@ export interface DriverState {
   updated_at: string
   data_confidence: DataConfidence
 }
+
+export type DataMode = 'live' | 'replay' | 'mock'
+
+export interface ReplayRace {
+  session_key: number
+  meeting_name: string
+  circuit: string
+  year?: number
+}
+
+/** GET /api/replay/status. Outside replay mode every field but `mode` is null. */
+export interface ReplayStatus {
+  mode: DataMode
+  session_key: number | null
+  meeting_name: string | null
+  circuit: string | null
+  year: number | null
+  race_time: string | null
+  lap: number | null
+  total_laps: number | null
+  track_status: TrackStatus | null
+  stoppage: boolean | null
+  speed: number | null
+  progress_pct: number | null
+  next_race: ReplayRace | null
+}
+
+/** One cached race, from GET /api/replay/sessions. */
+export interface ReplaySession {
+  session_key: number
+  year?: number
+  round?: number
+  circuit?: string
+  meeting_name?: string
+  session_name?: string
+  date_start?: string
+  rows: number
+  bytes: number
+  schema_version: number
+  in_playlist: boolean
+}

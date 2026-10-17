@@ -1,7 +1,7 @@
 """
 FastAPI application entry point with background tasks for polling OpenF1 API.
 """
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from typing import Dict
@@ -15,6 +15,7 @@ from app.health import get_health_status, health_manager
 from app.openf1_client import openf1_client
 from app.pipeline import RacePipeline
 from app.replay.broadcast import get_broadcast
+from app.replay.store import SCHEMA_VERSION, SessionStore
 from app.session import session_manager
 from app.sources import build_source
 from app.mock_data import mock_data_generator
@@ -160,7 +161,14 @@ app = FastAPI(
     description="Real-time F1 battle detection and tracking",
     version="0.1.0",
     lifespan=lifespan,
+    # Everything the backend serves lives under /api, docs included, so that
+    # the container path can serve the frontend at / from the same origin.
+    docs_url="/api/docs",
+    swagger_ui_oauth2_redirect_url="/api/docs/oauth2-redirect",
+    redoc_url=None,
+    openapi_url="/api/openapi.json",
 )
+api = APIRouter(prefix="/api")
 
 # Named pipelines, registered at import time rather than in lifespan so that a
 # TestClient built without starting lifespan still has one to read.
@@ -185,19 +193,20 @@ app.add_middleware(
 )
 
 
-@app.get("/")
+@api.get("")
 async def root():
     """Root endpoint."""
     return {
         "message": "F1 Battle Detector API",
         "version": "0.1.0",
-        "docs": "/docs",
+        "mode": config.DATA_MODE,
+        "docs": "/api/docs",
     }
 
 
-@app.get("/health")
+@api.get("/health")
 async def health():
-    """Health check endpoint."""
+    """Health check endpoint, plus which mode is serving and where replay is."""
     if config.DEMO_STATELESS:
         # There is no poll loop to have recorded a successful poll, and the
         # default reading of that absence - "cannot connect to OpenF1" - is
@@ -205,10 +214,73 @@ async def health():
         # construction.
         health_manager.record_successful_position_poll()
         health_manager.active_session = True
-    return get_health_status()
+    status = get_health_status()
+    status["mode"] = config.DATA_MODE
+    status["replay"] = None
+    if config.DATA_MODE == "replay":
+        broadcast = get_broadcast()
+        position = broadcast.locate(utcnow())
+        manifest = broadcast.replay(position.index).archive.manifest
+        status["replay"] = {
+            "session_key": position.session_key,
+            "race_time": position.race_time.isoformat(),
+            "progress_pct": round(position.progress * 100, 1),
+            "races": len(broadcast.slots),
+            # The cache format this build reads, and the one the race on air
+            # was written with. A mismatch is refused at load time.
+            "schema_version": SCHEMA_VERSION,
+            "manifest_schema_version": manifest.schema_version,
+        }
+    return status
 
 
-@app.get("/session/current")
+@api.get("/replay/status")
+async def get_replay_status():
+    """
+    Where the broadcast is: race, race time, lap, track status, speed.
+
+    Outside replay mode every field but `mode` is null, so the frontend can
+    call it unconditionally and decide what header to draw from `mode`.
+    """
+    if config.DATA_MODE != "replay":
+        return {
+            "mode": config.DATA_MODE,
+            **{field: None for field in (
+                "session_key", "meeting_name", "circuit", "year", "race_time",
+                "lap", "total_laps", "track_status", "stoppage", "speed",
+                "progress_pct", "next_race",
+            )},
+        }
+    return {"mode": "replay", **get_broadcast().status_at(utcnow())}
+
+
+@api.get("/replay/sessions")
+async def get_replay_sessions():
+    """Every cached race, from its manifest, oldest first."""
+    playlist = set()
+    if config.DATA_MODE == "replay":
+        playlist = {slot.replay.session_key for slot in get_broadcast().slots}
+    return {
+        "sessions": [
+            {
+                "session_key": manifest.session_key,
+                "year": manifest.year,
+                "round": manifest.round,
+                "circuit": manifest.circuit,
+                "meeting_name": manifest.meeting_name,
+                "session_name": manifest.session_name,
+                "date_start": manifest.date_start.isoformat() if manifest.date_start else None,
+                "rows": manifest.total_rows,
+                "bytes": manifest.total_bytes,
+                "schema_version": manifest.schema_version,
+                "in_playlist": manifest.session_key in playlist,
+            }
+            for manifest in SessionStore().manifests()
+        ],
+    }
+
+
+@api.get("/session/current")
 async def get_current_session():
     """Get current active F1 session."""
     if config.DATA_MODE == "replay":
@@ -232,7 +304,7 @@ async def get_current_session():
         }
 
 
-@app.get("/state/latest")
+@api.get("/state/latest")
 async def get_latest_state():
     """Get latest state for all drivers."""
     states = current_pipeline().current_states()
@@ -254,7 +326,7 @@ async def get_latest_state():
     }
 
 
-@app.get("/battles/top")
+@api.get("/battles/top")
 async def get_top_battles(k: int = 5, min_intensity: str = "WATCH"):
     """
     Get top K battles filtered by minimum intensity.
@@ -318,7 +390,7 @@ async def get_top_battles(k: int = 5, min_intensity: str = "WATCH"):
     }
 
 
-@app.get("/drivers/{driver_number}/trend")
+@api.get("/drivers/{driver_number}/trend")
 async def get_driver_trend(driver_number: int, points: int = 10):
     """Get gap trend for specific driver."""
     history = current_pipeline().history(driver_number)
@@ -348,6 +420,9 @@ async def get_driver_trend(driver_number: int, points: int = 10):
         "trend": trend_data,
         "count": len(trend_data)
     }
+
+
+app.include_router(api)
 
 
 if __name__ == "__main__":

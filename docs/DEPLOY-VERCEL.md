@@ -57,11 +57,11 @@ which is what makes preview deployments work without re-listing hostnames.
 Copy the production URL it prints, then check it:
 
 ```bash
-curl https://<backend-url>/health
-curl "https://<backend-url>/battles/top?k=5"
+curl https://<backend-url>/api/health
+curl "https://<backend-url>/api/battles/top?k=5"
 ```
 
-`/health` should say `healthy` and `/battles/top` should return battles. If it
+`/api/health` should say `healthy` and `/api/battles/top` should return battles. If it
 returns an empty list, wait a few seconds and retry — the scripted race has
 short quiet phases of up to ~5 seconds.
 

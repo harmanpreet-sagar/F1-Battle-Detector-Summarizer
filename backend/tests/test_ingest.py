@@ -24,9 +24,10 @@ WELL_AFTER = SESSION_END + timedelta(hours=3)
 class StubClient:
     """Serves the synthetic race, and remembers what was asked for."""
 
-    def __init__(self, rows=None, sessions=None, fails=()):
+    def __init__(self, rows=None, sessions=None, fails=(), meetings=None):
         self._rows = rows if rows is not None else race_rows.endpoints()
         self._sessions = sessions if sessions is not None else [race_rows.session_row()]
+        self._meetings = meetings if meetings is not None else [MEETING]
         self._fails = set(fails)
         self.requested = []
 
@@ -36,12 +37,29 @@ class StubClient:
             raise OpenF1APIError(f"HTTP 404 for /{endpoint}")
         if endpoint == "sessions":
             return self._sessions
+        if endpoint == "meetings":
+            return self._meetings
         return self._rows.get(endpoint, [])
 
     @property
     def data_requests(self):
-        """Endpoint fetches, excluding the session lookup."""
-        return [name for name in self.requested if name != "sessions"]
+        """Endpoint fetches, excluding the session and meeting lookups."""
+        return [name for name in self.requested if name not in ("sessions", "meetings")]
+
+
+MEETING = {
+    "meeting_key": 1250,
+    "meeting_name": "Italian Grand Prix",
+    "meeting_official_name": "FORMULA 1 PIRELLI GRAN PREMIO D'ITALIA 2025",
+}
+
+
+def a_session_without_its_meeting():
+    """What OpenF1's /sessions really returns: no meeting name at all."""
+    row = race_rows.session_row()
+    row.pop("meeting_name")
+    row.pop("meeting_official_name")
+    return row
 
 
 def ingestor(tmp_path, client=None, now=WELL_AFTER, **kwargs):
@@ -371,3 +389,58 @@ def test_a_refusal_exits_non_zero_with_the_reason(monkeypatch, capsys, tmp_path)
 
     assert code == 1
     assert "--session-key" in err
+
+
+# --------------------------------------------------------------------------
+# The meeting name
+# --------------------------------------------------------------------------
+
+def test_the_meeting_name_comes_from_meetings_when_the_session_lacks_it(tmp_path):
+    client = StubClient(sessions=[a_session_without_its_meeting()])
+
+    result = run(ingestor(tmp_path, client).run(session_key=SESSION_KEY))
+
+    assert result.manifest.meeting_name == "Italian Grand Prix"
+    assert SessionStore(tmp_path).read_manifest(SESSION_KEY).meeting_name == "Italian Grand Prix"
+    assert client.requested.count("meetings") == 1
+
+
+def test_the_short_name_beats_the_official_one(tmp_path):
+    """The official title is the sponsor's; a header wants "Italian Grand Prix"."""
+    result = run(ingestor(tmp_path).run(session_key=SESSION_KEY))
+
+    assert result.manifest.meeting_name == "Italian Grand Prix"
+
+
+def test_no_meeting_lookup_when_the_session_already_names_it(tmp_path):
+    client = StubClient()
+
+    run(ingestor(tmp_path, client).run(session_key=SESSION_KEY))
+
+    assert "meetings" not in client.requested
+
+
+def test_a_failed_meeting_lookup_costs_only_the_name(tmp_path):
+    client = StubClient(sessions=[a_session_without_its_meeting()], fails=("meetings",))
+
+    result = run(ingestor(tmp_path, client).run(session_key=SESSION_KEY))
+
+    assert result.fetched is True
+    assert result.manifest.meeting_name is None
+
+
+def test_a_cached_race_without_a_name_is_backfilled_without_refetching(tmp_path):
+    """Races cached before ingest looked names up get one; their data is untouched."""
+    store = SessionStore(tmp_path)
+    nameless = StubClient(sessions=[a_session_without_its_meeting()], fails=("meetings",))
+    run(ingestor(tmp_path, nameless).run(session_key=SESSION_KEY))
+    before = {p.name: p.read_bytes() for p in store.path_for(SESSION_KEY).glob("*.json.gz")}
+
+    client = StubClient(sessions=[a_session_without_its_meeting()])
+    result = run(ingestor(tmp_path, client).run(session_key=SESSION_KEY))
+
+    assert result.fetched is False
+    assert client.data_requests == []
+    assert store.read_manifest(SESSION_KEY).meeting_name == "Italian Grand Prix"
+    after = {p.name: p.read_bytes() for p in store.path_for(SESSION_KEY).glob("*.json.gz")}
+    assert after == before

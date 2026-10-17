@@ -291,15 +291,97 @@ def test_endpoints_serve_the_replay_without_a_poll_loop(stateless_replay, monkey
     monkeypatch.setattr(main, "utcnow", lambda: moment)
     client = TestClient(main.app)
 
-    battles = client.get("/battles/top?k=5&min_intensity=WATCH").json()
+    battles = client.get("/api/battles/top?k=5&min_intensity=WATCH").json()
     position = stateless_replay.locate(moment)
     # Detection ran at the race time of the current tick, not at the wall.
     assert battles["detected_at"] == stateless_replay.replay(0).tick_time(position.tick).isoformat()
     assert battles["battles"], "no battles served at a moment the excerpt has them"
     assert battles["battles"][0]["chaser_name"]
 
-    session = client.get("/session/current").json()
+    session = client.get("/api/session/current").json()
     assert session["session_key"] == 9928
     assert 1 <= session["current_lap"] <= session["total_laps"]
 
-    assert client.get("/state/latest").json()["count"] == 20
+    assert client.get("/api/state/latest").json()["count"] == 20
+
+
+REPLAY_STATUS_FIELDS = {
+    "mode", "session_key", "meeting_name", "circuit", "year", "race_time", "lap",
+    "total_laps", "track_status", "stoppage", "speed", "progress_pct", "next_race",
+}
+
+
+def test_replay_status_says_where_the_broadcast_is(stateless_replay, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app import main
+
+    moment = moment_of(stateless_replay, 300)
+    monkeypatch.setattr(main, "utcnow", lambda: moment)
+
+    status = TestClient(main.app).get("/api/replay/status").json()
+    position = stateless_replay.locate(moment)
+    replay = stateless_replay.replay(0)
+
+    assert set(status) == REPLAY_STATUS_FIELDS
+    assert status["mode"] == "replay"
+    assert status["session_key"] == 9928
+    assert status["meeting_name"] == "Hungarian Grand Prix"
+    assert status["circuit"] == "Hungaroring"
+    assert status["year"] == 2025
+    assert status["race_time"] == position.race_time.isoformat()
+    assert status["lap"] == replay.lap_at(position.race_time)
+    assert status["total_laps"] == replay.total_laps
+    assert status["track_status"] == "green"
+    assert status["speed"] == 1
+    assert 0 < status["progress_pct"] < 100
+    # One race in the playlist, so the next race is the same one again.
+    assert status["next_race"]["session_key"] == 9928
+
+
+def test_the_status_and_the_session_agree(stateless_replay, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app import main
+
+    monkeypatch.setattr(main, "utcnow", lambda: moment_of(stateless_replay, 300))
+    client = TestClient(main.app)
+
+    status = client.get("/api/replay/status").json()
+    session = client.get("/api/session/current").json()
+
+    assert session["current_lap"] == status["lap"]
+    assert session["total_laps"] == status["total_laps"]
+    assert session["track_status"] == status["track_status"]
+
+
+def test_replay_sessions_lists_the_cache(stateless_replay, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app import main
+    from tests.replay_fixtures import EXCERPT_ROOT
+
+    monkeypatch.setattr(config, "REPLAY_DATA_DIR", str(EXCERPT_ROOT))
+    sessions = TestClient(main.app).get("/api/replay/sessions").json()["sessions"]
+
+    race, = sessions
+    assert race["session_key"] == 9928
+    assert race["circuit"] == "Hungaroring"
+    assert race["round"] == 14
+    assert race["rows"] > 0 and race["bytes"] > 0
+    assert race["in_playlist"] is True
+
+
+def test_health_reports_the_replay_position(stateless_replay, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app import main
+    from app.replay.store import SCHEMA_VERSION
+
+    moment = moment_of(stateless_replay, 300)
+    monkeypatch.setattr(main, "utcnow", lambda: moment)
+
+    health = TestClient(main.app).get("/api/health").json()
+
+    assert health["status"] == "healthy"
+    assert health["mode"] == "replay"
+    assert health["replay"]["session_key"] == 9928
+    assert health["replay"]["race_time"] == stateless_replay.locate(moment).race_time.isoformat()
+    assert health["replay"]["schema_version"] == SCHEMA_VERSION
+    assert health["replay"]["manifest_schema_version"] == SCHEMA_VERSION
