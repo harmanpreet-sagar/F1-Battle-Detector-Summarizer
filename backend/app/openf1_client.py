@@ -36,12 +36,19 @@ class OpenF1Client:
         self.base_url = config.OPENF1_BASE_URL
         self.timeout = config.OPENF1_TIMEOUT_S
         self.max_retries = config.OPENF1_MAX_RETRIES
+        # OpenF1 publishes no free-tier rate limit, so identify the caller
+        # rather than arriving as an anonymous default-UA client. If ingest
+        # ever needs throttling, this is the string they would throttle.
+        headers = {"User-Agent": config.OPENF1_USER_AGENT}
         # Live data needs OpenF1's paid Sponsor tier. Historical data is free
         # and unauthenticated, so the header is simply absent without a token.
-        headers = {}
         if config.OPENF1_API_TOKEN:
             headers["Authorization"] = f"Bearer {config.OPENF1_API_TOKEN}"
-        self.client = httpx.AsyncClient(timeout=self.timeout, headers=headers)
+        self.client = httpx.AsyncClient(
+            timeout=self.timeout,
+            headers=headers,
+            verify=config.OPENF1_CA_BUNDLE or True,
+        )
     
     async def _request(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> List[Dict]:
         """Make a request to OpenF1 API with retry logic."""
@@ -55,9 +62,14 @@ class OpenF1Client:
                 return response.json()
             
             except httpx.HTTPStatusError as e:
-                logger.warning(f"HTTP error {e.response.status_code}: {e}")
-                if attempt == self.max_retries - 1:
-                    raise OpenF1APIError(f"HTTP {e.response.status_code}") from e
+                status = e.response.status_code
+                logger.warning(f"HTTP error {status}: {e}")
+                # A 4xx is the server saying the request itself is wrong, and
+                # repeating it verbatim cannot change that - it just costs
+                # OpenF1 two more requests. Rate limiting is the exception:
+                # 429 is a "not yet", which is exactly what backoff is for.
+                if (400 <= status < 500 and status != 429) or attempt == self.max_retries - 1:
+                    raise OpenF1APIError(f"HTTP {status}") from e
             
             except httpx.RequestError as e:
                 logger.warning(f"Request error: {e}")
@@ -71,6 +83,16 @@ class OpenF1Client:
         
         return []
     
+    async def get_endpoint(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> List[Dict]:
+        """
+        Fetch any OpenF1 endpoint by name.
+
+        The typed helpers below cover what live polling needs. Ingest (1.1)
+        pulls eleven endpoints for one race, most of which the live path never
+        touches, and wrapping each in its own method would add no meaning.
+        """
+        return await self._request(endpoint, params or {})
+
     async def get_sessions(self, date: Optional[str] = None) -> List[Dict]:
         """Get sessions, optionally filtered by date."""
         params = {"date": date} if date else {}

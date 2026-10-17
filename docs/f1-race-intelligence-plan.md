@@ -221,7 +221,30 @@ Command: `python -m app.ingest --year 2025 --round 14` or `--session-key <key>`
 - Sequential requests, a short pause between them, retry with exponential backoff, a descriptive `User-Agent`. OpenF1 doesn't document free-tier rate limits, so be polite and fetch each race **once**.
 - Idempotent: if the manifest exists and its hashes match, skip.
 
-**Measure and record** (the first thing to do in 1.1, since the numbers drive later choices): rows and compressed size per endpoint for one race, and total size for 5 races. Rough expectation: `intervals` ≈ 20 drivers × one row per ~4s × ~1.5–2h ≈ 30–40k rows. This is an estimate; replace it with the real number.
+**Measured** — 2025 Hungarian GP (round 14, `session_key` 9928), a 70-lap, 96-minute race with 20 starters:
+
+| Endpoint | Rows | Compressed |
+| --- | ---: | ---: |
+| `intervals` | 27,144 | 315 KB |
+| `laps` | 1,369 | 41 KB |
+| `position` | 482 | 3 KB |
+| `overtakes` | 232 | 2 KB |
+| `race_control` | 95 | 2 KB |
+| `stints` | 49 | 0.5 KB |
+| `pit` | 29 | 0.7 KB |
+| `drivers` | 20 | 1.5 KB |
+| `session_result` | 20 | 0.4 KB |
+| `starting_grid` | — | absent (404) |
+| **Total** | **29,440** | **391 KB** |
+
+`intervals` is 92% of the bytes, at the low end of the 30–40k estimate. **A curated playlist of 5–8 races costs roughly 2–3 MB**, against the < 50 MB target in 1.7 — so bundle size is not the constraint it was expected to be, and there is no reason to trim stored fields or shorten the playlist.
+
+Two things the first real run settled:
+
+- `starting_grid` 404s for this session, which is why the optional endpoints are recorded as absent rather than failing the ingest. A 404 is also not retried: repeating it cannot change the answer, it just costs OpenF1 two more requests.
+- `position` carries only 482 rows, because it emits on change rather than on a cadence. Running order comes from there; gaps come from `intervals`.
+
+Building the full timeline from this cache takes **~150 ms** for 29,053 events, which sets the floor for the seek budget in 1.3.
 
 ### 1.2 Timeline builder
 

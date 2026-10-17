@@ -111,3 +111,68 @@ async def test_openf1_client_retry_logic(monkeypatch):
         await instance.get_intervals(9999)
 
     assert len(attempts) == instance.max_retries
+
+
+@pytest.mark.asyncio
+async def test_a_404_is_not_retried(monkeypatch):
+    """
+    `starting_grid` genuinely 404s for some sessions. Asking twice more
+    cannot change the answer; it just costs OpenF1 two more requests.
+    """
+    import httpx
+
+    instance = OpenF1Client()
+    attempts = []
+
+    async def not_found(url, params=None):
+        attempts.append(url)
+        request = httpx.Request("GET", url)
+        return httpx.Response(404, request=request)
+
+    monkeypatch.setattr(instance.client, "get", not_found)
+
+    with pytest.raises(OpenF1APIError, match="HTTP 404"):
+        await instance.get_endpoint("starting_grid", {"session_key": 9928})
+
+    assert len(attempts) == 1
+
+
+@pytest.mark.asyncio
+async def test_rate_limiting_is_retried(monkeypatch):
+    """429 is a "not yet", which is what backoff is for."""
+    import httpx
+
+    instance = OpenF1Client()
+    attempts = []
+
+    async def too_many(url, params=None):
+        attempts.append(url)
+        request = httpx.Request("GET", url)
+        return httpx.Response(429, request=request)
+
+    monkeypatch.setattr(instance.client, "get", too_many)
+
+    with pytest.raises(OpenF1APIError, match="HTTP 429"):
+        await instance.get_endpoint("intervals", {"session_key": 9928})
+
+    assert len(attempts) == instance.max_retries
+
+
+@pytest.mark.asyncio
+async def test_a_server_error_is_retried(monkeypatch):
+    import httpx
+
+    instance = OpenF1Client()
+    attempts = []
+
+    async def broken(url, params=None):
+        attempts.append(url)
+        request = httpx.Request("GET", url)
+        return httpx.Response(503, request=request)
+
+    monkeypatch.setattr(instance.client, "get", broken)
+
+    with pytest.raises(OpenF1APIError, match="HTTP 503"):
+        await instance.get_endpoint("laps", {"session_key": 9928})
+
+    assert len(attempts) == instance.max_retries

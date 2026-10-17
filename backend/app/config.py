@@ -100,6 +100,38 @@ class Config:
     # Live data is behind OpenF1's paid Sponsor tier. Historical data needs no
     # token, so replay and mock ignore this entirely.
     OPENF1_API_TOKEN: Optional[str] = os.getenv("OPENF1_API_TOKEN") or None
+    # A CA bundle to verify OpenF1's certificate against, instead of the one
+    # httpx ships. Needed only behind something that intercepts TLS - a
+    # corporate proxy, or consumer antivirus doing HTTPS scanning - which
+    # presents its own certificate and so fails verification. Unset means the
+    # default bundle, which is right nearly everywhere.
+    OPENF1_CA_BUNDLE: Optional[str] = os.getenv("OPENF1_CA_BUNDLE") or None
+    # Sent on every request so the project is identifiable in OpenF1's logs.
+    OPENF1_USER_AGENT: str = os.getenv(
+        "OPENF1_USER_AGENT",
+        "f1-battle-detector/0.1 (+https://github.com/harmanpreet-sagar/F1-Battle-Detector-Summarizer)",
+    )
+
+    # Replay cache (Phase 1)
+    # Where `python -m app.ingest` writes, and where ReplaySource reads.
+    # Relative paths resolve against backend/, not the working directory, so
+    # the cache is found whether the app is started from the repo root, from
+    # backend/, or from a serverless bundle.
+    REPLAY_DATA_DIR: str = os.getenv("REPLAY_DATA_DIR", "./data/sessions")
+    # OpenF1's free tier serves a session only after its live window closes,
+    # which is date_end + 30 min. The extra buffer keeps ingest from racing
+    # that boundary and half-fetching a session. See app/ingest.py.
+    INGEST_MIN_SESSION_AGE_MIN: float = float(os.getenv("INGEST_MIN_SESSION_AGE_MIN", "45"))
+    # Pause between the sequential endpoint fetches of one ingest run. No
+    # documented rate limit means being polite is the whole strategy.
+    INGEST_REQUEST_PAUSE_S: float = float(os.getenv("INGEST_REQUEST_PAUSE_S", "1.0"))
+    # A stretch of race time with no events longer than this is a stoppage
+    # (red flag, or the gap before lights out). The timeline reports them;
+    # playback compresses them rather than showing a frozen screen.
+    REPLAY_QUIET_GAP_S: float = float(os.getenv("REPLAY_QUIET_GAP_S", "60.0"))
+    # Laps a driver can go without a position or interval row before replay
+    # treats them as retired and drops them from the running order.
+    REPLAY_RETIREMENT_LAPS: int = int(os.getenv("REPLAY_RETIREMENT_LAPS", "2"))
 
     # Polling intervals
     POLL_POSITIONS_INTERVAL_S: float = float(os.getenv("POLL_POSITIONS_INTERVAL_S", "1.5"))

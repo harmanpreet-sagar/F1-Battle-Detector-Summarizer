@@ -108,7 +108,12 @@ F1-Battle-Detector-Summarizer/
 │   │   ├── health.py         # Health monitoring
 │   │   ├── mock_data.py      # DATA_MODE=mock data generator
 │   │   ├── demo.py           # Mock mode without a poll loop (serverless)
+│   │   ├── ingest.py         # `python -m app.ingest` - cache a race
+│   │   ├── replay/
+│   │   │   ├── store.py      # The on-disk race cache and its manifests
+│   │   │   └── timeline.py   # Cached endpoints -> one event stream
 │   │   └── config.py         # Configuration
+│   ├── data/sessions/        # Cached races, one directory per session_key
 │   ├── api/index.py          # Vercel entrypoint (ASGI)
 │   ├── vercel.json
 │   ├── tests/                # Unit and integration tests
@@ -169,6 +174,38 @@ npm run build
 (`npm test` is declared in `package.json` but points at a jest that is not
 installed.)
 
+## Caching a race for replay
+
+Historical OpenF1 data is free and needs no token. `app.ingest` fetches one
+race's endpoints and stores them compressed under `backend/data/sessions/`,
+so replay never depends on OpenF1 at runtime:
+
+```bash
+cd backend
+python -m app.ingest --year 2025 --round 14     # Nth race of the season by date
+python -m app.ingest --session-key 9693         # or by OpenF1 session key
+python -m app.ingest --list                     # what is already cached
+```
+
+Each run prints rows and compressed size per endpoint, which is what decides
+how many races fit inside the deployed bundle. A full race is about **390 KB**
+compressed - the 2025 Hungarian GP is 29,440 rows, 92% of them `intervals` -
+so a playlist of 5-8 races costs 2-3 MB.
+
+A few things it will not do. It refuses a session that ended less than 45
+minutes ago, because OpenF1's free archive has not settled yet and the result
+would be a partial race that looks complete. It fetches endpoints one at a
+time with a pause between them - there is no published free-tier rate limit,
+so the strategy is to be polite. And it fetches each race exactly once: a
+second run over an already-cached race makes no requests at all, and `--force`
+re-fetches but still writes nothing if the data has not changed.
+
+`car_data` and `location` are deliberately not fetched. That telemetry is
+orders of magnitude larger than everything else combined and nothing reads it.
+
+If the fetch fails with a certificate error, something on your machine is
+intercepting TLS. Point `OPENF1_CA_BUNDLE` at its CA certificate.
+
 ## Deployment
 
 ### Vercel (both halves, mock data on repeat)
@@ -212,6 +249,14 @@ Key environment variables (see `.env.example` files):
 - `DEMO_WINDOW_TICKS` - Ticks of mock race replayed per request (default: 48)
 - `CORS_ORIGIN_REGEX` - Origin pattern to allow alongside `CORS_ORIGINS`, for
   preview deployments whose hostname changes on every push
+- `REPLAY_DATA_DIR` - Where cached races live (default: `./data/sessions`,
+  relative to `backend/`)
+- `INGEST_MIN_SESSION_AGE_MIN` - Minutes after a session ends before `app.ingest`
+  will fetch it (default: 45)
+- `REPLAY_QUIET_GAP_S` - Race-time silence that counts as a stoppage (default: 60s)
+- `OPENF1_CA_BUNDLE` - CA bundle to verify OpenF1's certificate against. Only
+  needed behind something that intercepts TLS (a corporate proxy, or antivirus
+  doing HTTPS scanning), which presents its own certificate
 
 `backend/.env` is read on startup. Real environment variables take precedence,
 so `DATA_MODE=mock uvicorn app.main:app` overrides the file.
@@ -229,7 +274,10 @@ serves them over REST; the frontend renders them live.
 - ✅ OpenF1 polling loops (positions, intervals, laps, session)
 - ✅ Frontend dashboard with live refresh
 - ✅ Docker setup and CI
-- ✅ 59 backend tests
+- ✅ Race ingest and cache (`python -m app.ingest`)
+- ✅ Replay timeline builder
+- ⬜ Replay playback (`DATA_MODE=replay`) - next
+- ✅ 217 backend tests
 
 Known limits:
 
