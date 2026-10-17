@@ -39,22 +39,20 @@ Real-time Formula 1 battle detection and tracking system. A live race companion 
 
 ### Option 1: Docker Compose (Recommended)
 
+One container: the dashboard exported to static files and served by FastAPI at
+`/`, the API at `/api`, and the cached races baked in. It plays the replay
+broadcast out of the box; no `.env` is needed.
+
 ```bash
-# Clone the repository
 git clone <your-repo-url>
 cd F1-Battle-Detector-Summarizer
+docker compose up --build
 
-# Copy environment files
-cp backend/.env.example backend/.env
-cp frontend/.env.local.example frontend/.env.local
-
-# Start services
-docker-compose up --build
-
-# Backend: http://localhost:8000
-# Frontend: http://localhost:3000
-# API Docs: http://localhost:8000/api/docs
+# Dashboard: http://localhost:8000
+# API docs:  http://localhost:8000/api/docs
 ```
+
+`DATA_MODE=mock docker compose up` plays the scripted mock race instead.
 
 ### Option 2: Manual Setup
 
@@ -88,7 +86,7 @@ npm install
 # Copy .env file
 cp .env.local.example .env.local
 
-# Run dev server
+# Run dev server - proxies /api to the backend on :8000
 npm run dev
 ```
 
@@ -121,8 +119,7 @@ F1-Battle-Detector-Summarizer/
 │   ├── vercel.json
 │   ├── tests/                # Unit and integration tests
 │   ├── requirements.txt
-│   ├── requirements-dev.txt
-│   └── Dockerfile
+│   └── requirements-dev.txt
 ├── frontend/
 │   ├── app/
 │   │   ├── components/       # React components
@@ -130,8 +127,8 @@ F1-Battle-Detector-Summarizer/
 │   │   ├── lib/              # API client
 │   │   ├── types/            # TypeScript types
 │   │   └── page.tsx          # Main dashboard
-│   ├── package.json
-│   └── Dockerfile
+│   └── package.json
+├── Dockerfile                # One image: static dashboard + API + races
 ├── docker-compose.yml
 ├── docs/DEPLOY-VERCEL.md     # Deploying both halves to Vercel
 ├── PLAN.md                   # Detailed implementation plan
@@ -255,24 +252,30 @@ reports the same battles as a server that has run since lights out; only
 
 ## Deployment
 
-### Vercel (both halves, mock data on repeat)
+### Vercel (both halves, replay on a loop)
 
-Two Vercel projects from this repo - `backend/` and `frontend/` - running the
-scripted 24-lap mock race on a six-minute loop. No OpenF1 token, no always-on
-process, $0/month. Step by step in
+Two Vercel projects from this repo - `backend/` and `frontend/` - playing six
+real 2025 races (Bahrain, Austria, Britain, Belgium, Hungary and São Paulo) at
+5x on a loop. The races ship inside the backend function (2.2 MB), so there are
+no OpenF1 calls at runtime, no token and no always-on process. Step by step in
 [docs/DEPLOY-VERCEL.md](./docs/DEPLOY-VERCEL.md).
 
-The one thing to know: Vercel freezes the process between requests, so the
-background poll loop that normally fills the pipeline never advances there.
-`DEMO_STATELESS=true` (set automatically under Vercel) makes each request
-rebuild the last 48 ticks of the race into a throwaway pipeline instead - same
-detection code, ~20ms, no process to keep alive. See `backend/app/demo.py`.
+The one thing to know: Vercel freezes the process between requests, so nothing
+can keep a replay running. Instead, where the broadcast is depends only on the
+wall clock, and each request rebuilds that moment into a throwaway pipeline:
+~30 ms warm, every viewer seeing the same race. See
+`backend/app/replay/broadcast.py`.
+
+### Docker
+
+The root `Dockerfile` is the whole app in one image - see Option 1 above. Any
+host that runs a container will do.
 
 ### Live data
 
 `DATA_MODE=live` needs a process that stays alive to poll, which serverless is
-not. Use the `docker-compose.yml` here, or a container host such as
-[Render](https://render.com), with Vercel serving the frontend against it.
+not. Run the image with `DATA_MODE=live` on a container host such as
+[Render](https://render.com).
 
 ## Configuration
 
@@ -312,13 +315,20 @@ Key environment variables (see `.env.example` files):
 - `OPENF1_CA_BUNDLE` - CA bundle to verify OpenF1's certificate against. Only
   needed behind something that intercepts TLS (a corporate proxy, or antivirus
   doing HTTPS scanning), which presents its own certificate
+- `OPENF1_RETRY_BASE_S` - First wait between retries, doubling each time; a
+  429's `Retry-After` overrides it (default: 2)
+- `FRONTEND_DIR` - Exported frontend to serve at `/` (set in the Docker image;
+  unset elsewhere)
 
 `backend/.env` is read on startup. Real environment variables take precedence,
 so `DATA_MODE=mock uvicorn app.main:app` overrides the file.
 
 **Frontend:**
 
-- `NEXT_PUBLIC_API_BASE_URL` - Backend API URL
+- `NEXT_PUBLIC_API_BASE_URL` - Backend API URL. Empty means same origin: the
+  dev server proxies `/api` to `BACKEND_URL` (default `http://localhost:8000`),
+  and the Docker image serves both. Set it on Vercel, where the API is a
+  separate project.
 
 ## Development Status
 
@@ -334,8 +344,9 @@ serves them over REST; the frontend renders them live.
 - ✅ Replay playback (`DATA_MODE=replay`), container and serverless
 - ✅ `/api` routes, replay status and cached-race endpoints
 - ✅ Replay UI: header, race clock, track status banner, tyres and team colours
-- ⬜ Replay on the deployed demo (1.7) - next
-- ✅ 284 backend tests
+- ✅ Deployment packaging: replay on Vercel, one-image Docker (1.7)
+- ⬜ Verify on a preview deployment, then 1.8 tests - next
+- ✅ 311 backend tests
 
 Known limits:
 

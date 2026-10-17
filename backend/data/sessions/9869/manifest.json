@@ -1,0 +1,75 @@
+{
+  "circuit": "Interlagos",
+  "date_end": "2025-11-09T19:00:00+00:00",
+  "date_start": "2025-11-09T17:00:00+00:00",
+  "endpoints": {
+    "drivers": {
+      "bytes": 1458,
+      "hash": "46e5bdc72ad63c16d8ca467c6c22d9336c24e21afc701cd6e48f4cafd063002a",
+      "missing": false,
+      "rows": 20
+    },
+    "intervals": {
+      "bytes": 317331,
+      "hash": "8463eadb859c006b0e498b460f37ccfc7e1dfd631b951a6996c17ded0f49885d",
+      "missing": false,
+      "rows": 24513
+    },
+    "laps": {
+      "bytes": 39231,
+      "hash": "982c6f0647c203fca19491878e3a780c1f78a32ada05d43a5d9439334b5b6d5f",
+      "missing": false,
+      "rows": 1252
+    },
+    "overtakes": {
+      "bytes": 3511,
+      "hash": "fc169184827a845cb1654f1d4f671a68e1ee04e267b9a3d24591cbb7031f9a4f",
+      "missing": false,
+      "rows": 369
+    },
+    "pit": {
+      "bytes": 896,
+      "hash": "7261efa82f88d298155cf03f5d2c4b4f30772379fb60a7888f814db3865ae722",
+      "missing": false,
+      "rows": 37
+    },
+    "position": {
+      "bytes": 4692,
+      "hash": "c1b386f5cb5dc02a9d54876ebf0cce4991c6c94f93d3cfd376ec83f95fd06dbe",
+      "missing": false,
+      "rows": 759
+    },
+    "race_control": {
+      "bytes": 1421,
+      "hash": "f809d38a215128765f03f5d34a123f37bba0b3ac3f0a80d9ef33b3d3ea231b58",
+      "missing": false,
+      "rows": 58
+    },
+    "session_result": {
+      "bytes": 471,
+      "hash": "3168b485248224533bb00a1f282466ee9074f57645de9df1a38aed792e4b10a8",
+      "missing": false,
+      "rows": 20
+    },
+    "starting_grid": {
+      "bytes": 22,
+      "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "missing": true,
+      "rows": 0
+    },
+    "stints": {
+      "bytes": 599,
+      "hash": "d7ee9109917a90ae22fe914493bc9b7a72a29e8785087cdaa059e3ae8bf4d8f7",
+      "missing": false,
+      "rows": 57
+    }
+  },
+  "fetched_at": "2026-10-17T20:17:13.145439+00:00",
+  "gmt_offset": "-03:00:00",
+  "meeting_name": "S\u00e3o Paulo Grand Prix",
+  "round": 21,
+  "schema_version": 1,
+  "session_key": 9869,
+  "session_name": "Race",
+  "year": 2025
+}

@@ -1,12 +1,16 @@
 services:
-  backend:
-    build: ./backend
+  app:
+    # The root Dockerfile: dashboard at /, API at /api, one origin.
+    build: .
     ports:
       - "8000:8000"
     env_file:
-      - ./backend/.env
-    volumes:
-      - ./backend/data:/app/data
+      # Optional: a fresh clone has no backend/.env, and replay needs none.
+      - path: ./backend/.env
+        required: false
+    environment:
+      # Set here so it wins over a DATA_MODE or TEST_MODE left in backend/.env.
+      DATA_MODE: ${DATA_MODE:-replay}
     restart: unless-stopped
     healthcheck:
       # python:3.11-slim ships no curl; use the interpreter that is already here
@@ -14,15 +18,3 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-
-  frontend:
-    build:
-      context: ./frontend
-      args:
-        # Baked into the bundle at build time - see frontend/Dockerfile
-        NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
-    ports:
-      - "3000:3000"
-    depends_on:
-      - backend
-    restart: unless-stopped

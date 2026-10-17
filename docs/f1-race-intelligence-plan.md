@@ -375,6 +375,20 @@ Two projects from this one repo, as `docs/DEPLOY-VERCEL.md` describes: `backend/
 | Container path | `next.config.js` keeps `output: 'export'` available, and FastAPI mounts `frontend/out` at `/` after registering `/api` routes, so the Docker image stays a single same-origin app. Compose sets `DATA_MODE`; the dev server proxies `/api` to the backend. |
 | Push-to-deploy | Both projects import this repo with different Root Directories, so `main` redeploys on push and every PR gets a preview URL. |
 
+**Built** — `backend/vercel.json` runs `DATA_MODE=replay` and ships `data/sessions/**` via `includeFiles`. A root `Dockerfile` builds one same-origin image (Next static export served by FastAPI at `/` through `FRONTEND_DIR`, mounted after `/api`), and `docker-compose.yml` is a single service. The per-service Dockerfiles are gone. `npm run dev` proxies `/api` to `:8000`, so the API base URL defaults to empty (same origin) everywhere except Vercel. The deployment log is in `docs/DEPLOY-VERCEL.md`.
+
+- **The playlist was chosen by measurement.** I ingested ten 2025 candidates, fast-replayed each, and ranked them by time with a battle in the points plus time at HOT. The six kept: São Paulo (28.9% / 7.8%), Britain, Austria, Bahrain, Belgium and Hungary. Australia and Miami were dropped (about 10% and 4% of the race with a battle in the points). That's 2.2 MB, against the < 50 MB target.
+- **Two bugs found while choosing.**
+  - **No retry backoff.** OpenF1 rate-limited a 1-request-per-second ingest (HTTP 429), and the client turned out to retry with no delay at all, despite 1.1's "retry with exponential backoff". It now doubles from `OPENF1_RETRY_BASE_S` and honours `Retry-After`, capped at 120s.
+  - **Steward notices read as safety cars.** Notices that merely mention the safety car ("... NOTED - SAFETY CAR INFRINGEMENT") counted as deployments, which froze Bahrain under a safety car for its last 27 minutes and Britain for 79% of the race. Only race control's `SafetyCar` category deploys one now, and a test fails if any shipped race is neutralised for over half its length.
+- **Measured locally:**
+  - **Cold start** is ~1.2s to import (mostly FastAPI; building the OpenF1 client is now deferred, saving ~0.3s) plus ~1.1s on the first request, which indexes all six races.
+  - **A warm request** is ~30ms.
+  - **The bundle** is ~25 MB (deps ~20 MB) against the 250 MB limit.
+  - If the cold start matters on a preview deployment, the fix is to store each race's start, end and stoppages in its manifest at ingest and build a race's timeline only when the broadcast reaches it.
+- **The Docker image is built and verified** (264 MB). `/` serves the dashboard, `/api/docs` and `/api/health` answer from the same port, an unknown path returns 404, and the container indexes all six races in ~1.3s at startup before joining the broadcast. Its quiet periods are all after the chequered flag, where the feed thins out during the cool-down lap. Each race keeps 3-12 minutes of post-race data, so ending races at the flag is a small polish for later.
+- **Not yet verified on Vercel.** That needs a push and a preview deployment (1.9).
+
 ### 1.8 Tests (network-free, CI stays green on race weekends)
 
 - `tests/fixtures/race_excerpt/`: ~10 laps of one real race, all endpoints, trimmed and committed. It must include at least one pit stop, one position swap and, ideally, a VSC or SC period.

@@ -256,6 +256,14 @@ def test_a_gap_row_with_no_timestamp_is_dropped(tmp_path):
     ({"category": "Drs", "message": "DRS ENABLED"}, None),
     ({"category": "SafetyCar", "message": "SAFETY CAR IN THIS LAP"}, None),
     ({"category": "SafetyCar", "message": "VIRTUAL SAFETY CAR ENDING"}, None),
+    # Steward notices mention the safety car without deploying one
+    ({"category": "Other", "message": "TURN 4 INCIDENT INVOLVING CARS 30 (LAW) AND 18 (STR) "
+                                      "NOTED - SAFETY CAR INFRINGEMENT"}, None),
+    ({"category": "Other", "message": "FIA STEWARDS: 5 SECOND TIME PENALTY FOR CAR 1 (VER) - "
+                                      "OVERTAKING UNDER SAFETY CAR"}, None),
+    # Rows without a category still deploy on the usual wording
+    ({"message": "SAFETY CAR DEPLOYED"}, "sc"),
+    ({"message": "VIRTUAL SAFETY CAR DEPLOYED"}, "vsc"),
 ])
 def test_race_control_messages_map_to_a_track_status(row, expected):
     assert track_status_from(row) == expected

@@ -155,7 +155,15 @@ def track_status_from(row: Dict) -> Optional[TrackStatus]:
     if flag == "RED":
         return "red"
 
-    if category == "SafetyCar" or "SAFETY CAR" in message:
+    # Only race control's SafetyCar category deploys one. The phrase turns up
+    # in steward notices too - "INCIDENT ... NOTED - SAFETY CAR INFRINGEMENT" -
+    # and matching on it froze the 2025 Bahrain GP under a safety car for its
+    # last 27 minutes. A row with no category at all falls back to how the
+    # message starts, which is how deployments are always worded.
+    deploys = category == "SafetyCar" or (
+        not category and message.startswith(("SAFETY CAR", "VIRTUAL SAFETY CAR"))
+    )
+    if deploys:
         if "ENDING" in message or "IN THIS LAP" in message:
             return None
         if "VIRTUAL" in message or "VSC" in message:

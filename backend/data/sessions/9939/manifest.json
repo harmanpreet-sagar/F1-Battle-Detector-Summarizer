@@ -1,0 +1,75 @@
+{
+  "circuit": "Spa-Francorchamps",
+  "date_end": "2025-07-27T15:00:00+00:00",
+  "date_start": "2025-07-27T13:00:00+00:00",
+  "endpoints": {
+    "drivers": {
+      "bytes": 1458,
+      "hash": "e5c2fd3bda3102600932a0bf52dd32ea78421dc2503d199e1e9bcea7b62e7557",
+      "missing": false,
+      "rows": 20
+    },
+    "intervals": {
+      "bytes": 279854,
+      "hash": "6673e7e0107bdb6268ddd5482de58f326fbd5bda5f85ef9cb5a10cc71d455b61",
+      "missing": false,
+      "rows": 23307
+    },
+    "laps": {
+      "bytes": 31703,
+      "hash": "6a4f903102ecfcd89f9767a678d984a8bb6d1d29fdb300668d417186ea5ce97c",
+      "missing": false,
+      "rows": 879
+    },
+    "overtakes": {
+      "bytes": 1326,
+      "hash": "ce540e0a8b46ce4529c9eaf7ee1694a8d198dea454dca72564363018cd03ae6b",
+      "missing": false,
+      "rows": 126
+    },
+    "pit": {
+      "bytes": 634,
+      "hash": "0f49a5cf0d14fdb96a8e57530ef9c68871d5c1f3a41186947c4fc0f88f59f416",
+      "missing": false,
+      "rows": 26
+    },
+    "position": {
+      "bytes": 1812,
+      "hash": "28b4027ba1fe797ef3bb278a4e54189e1a121cfe597943ca5ab5ea346230baec",
+      "missing": false,
+      "rows": 275
+    },
+    "race_control": {
+      "bytes": 1832,
+      "hash": "b19f93dd69622e51bac026050db86fa6f91b4376351620975e229af24ee9b6ab",
+      "missing": false,
+      "rows": 117
+    },
+    "session_result": {
+      "bytes": 507,
+      "hash": "d26f345f6d9cd17d013bca46c07d148ad74a9250877c5def1c584f158cf2164a",
+      "missing": false,
+      "rows": 20
+    },
+    "starting_grid": {
+      "bytes": 22,
+      "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "missing": true,
+      "rows": 0
+    },
+    "stints": {
+      "bytes": 422,
+      "hash": "7712eeeafe11adc85607a500b274561e5bf9bacdf9652c2b62e84b9ff3e488ac",
+      "missing": false,
+      "rows": 60
+    }
+  },
+  "fetched_at": "2026-10-17T20:26:15.577325+00:00",
+  "gmt_offset": "02:00:00",
+  "meeting_name": "Belgian Grand Prix",
+  "round": 13,
+  "schema_version": 1,
+  "session_key": 9939,
+  "session_name": "Race",
+  "year": 2025
+}

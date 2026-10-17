@@ -401,3 +401,41 @@ def test_battle_cards_name_both_cars_and_their_tyres(stateless_replay, monkeypat
             assert len(battle[f"{side}_team_colour"]) == 6
             assert battle[f"{side}_tyre"]["compound"] in ("SOFT", "MEDIUM", "HARD")
             assert battle[f"{side}_tyre"]["age_laps"] >= 0
+
+
+# --------------------------------------------------------------------------
+# What ships (1.7)
+# --------------------------------------------------------------------------
+
+def test_every_shipped_race_is_replayable():
+    """
+    The races under data/sessions are the deployed playlist. One that fails to
+    load or index would take the whole broadcast down on the first request.
+    """
+    from app.replay.store import SCHEMA_VERSION
+
+    manifests = SessionStore().manifests()
+    assert len(manifests) >= 5, "the playlist should have a handful of races"
+
+    for manifest in manifests:
+        replay = RaceReplay(SessionStore().load(manifest.session_key))
+        assert manifest.schema_version == SCHEMA_VERSION
+        assert manifest.meeting_name, f"{manifest.session_key} has no meeting name"
+        assert replay.total_laps and replay.total_laps > 40, manifest.session_key
+        assert len(replay.timeline.drivers) >= 18, manifest.session_key
+        # A neutralised track for most of a race is the steward-notice bug.
+        neutral = sum(
+            (b - a).total_seconds()
+            for a, b in zip(replay._status_times, replay._status_times[1:] + [replay.timeline.end])
+            if replay.track_status_at(a) in ("sc", "vsc", "red")
+        )
+        assert neutral < 0.5 * replay.timeline.duration.total_seconds(), manifest.session_key
+
+
+def test_the_shipped_playlist_loops():
+    broadcast = Broadcast.from_store(SessionStore(), playlist=[])
+    first = broadcast.locate(broadcast.epoch)
+    later = broadcast.locate(broadcast.epoch + timedelta(seconds=broadcast.duration_s + 1))
+
+    assert len(broadcast.slots) == len(SessionStore().manifests())
+    assert later.cycle == first.cycle + 1

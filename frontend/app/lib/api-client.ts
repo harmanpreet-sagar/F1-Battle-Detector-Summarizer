@@ -4,7 +4,9 @@
 
 import type { ReplaySession, ReplayStatus } from '../types/api'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000'
+// Empty means same origin: the dev server proxies /api, and the container
+// serves the site and the API together. Vercel sets the backend's URL.
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? ''
 
 export async function fetcher(url: string) {
   const response = await fetch(`${API_BASE_URL}${url}`)

@@ -3,8 +3,10 @@ FastAPI application entry point with background tasks for polling OpenF1 API.
 """
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
-from typing import Dict
+from pathlib import Path
+from typing import Dict, Optional
 import asyncio
 import logging
 
@@ -428,6 +430,26 @@ async def get_driver_trend(driver_number: int, points: int = 10):
 
 
 app.include_router(api)
+
+
+def mount_frontend(target: FastAPI, directory: Optional[str]) -> bool:
+    """
+    Serve the exported frontend at /, after every /api route.
+
+    Starlette matches routes in order, so mounting last is what keeps /api
+    winning over a static file of the same name. A missing directory is not an
+    error: running the backend alone, or on Vercel, is normal.
+    """
+    if not directory or not Path(directory).is_dir():
+        if directory:
+            logger.warning(f"FRONTEND_DIR={directory} does not exist; serving the API only")
+        return False
+    target.mount("/", StaticFiles(directory=directory, html=True), name="frontend")
+    logger.info(f"Serving the frontend from {directory}")
+    return True
+
+
+mount_frontend(app, config.FRONTEND_DIR)
 
 
 if __name__ == "__main__":

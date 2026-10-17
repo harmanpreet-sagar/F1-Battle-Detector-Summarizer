@@ -97,6 +97,9 @@ class Config:
     OPENF1_BASE_URL: str = os.getenv("OPENF1_BASE_URL", "https://api.openf1.org/v1")
     OPENF1_TIMEOUT_S: float = float(os.getenv("OPENF1_TIMEOUT_S", "5.0"))
     OPENF1_MAX_RETRIES: int = int(os.getenv("OPENF1_MAX_RETRIES", "3"))
+    # First wait between attempts; it doubles each time (2s, 4s, ...). A 429
+    # that says how long to wait (Retry-After) is taken at its word instead.
+    OPENF1_RETRY_BASE_S: float = float(os.getenv("OPENF1_RETRY_BASE_S", "2.0"))
     # Live data is behind OpenF1's paid Sponsor tier. Historical data needs no
     # token, so replay and mock ignore this entirely.
     OPENF1_API_TOKEN: Optional[str] = os.getenv("OPENF1_API_TOKEN") or None
@@ -152,6 +155,11 @@ class Config:
     REPLAY_WINDOW_TICKS: int = int(os.getenv("REPLAY_WINDOW_TICKS", "48"))
     # Wall seconds a stoppage (see REPLAY_QUIET_GAP_S) is played back in.
     REPLAY_QUIET_PLAYBACK_S: float = float(os.getenv("REPLAY_QUIET_PLAYBACK_S", "5.0"))
+
+    # The exported frontend (`NEXT_OUTPUT=export npm run build` -> out/), served
+    # at / beside /api so the container is one same-origin app. Unset on Vercel,
+    # where the frontend is its own project.
+    FRONTEND_DIR: Optional[str] = os.getenv("FRONTEND_DIR") or None
 
     # Polling intervals
     POLL_POSITIONS_INTERVAL_S: float = float(os.getenv("POLL_POSITIONS_INTERVAL_S", "1.5"))
