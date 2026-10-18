@@ -159,9 +159,10 @@ def test_build_source_returns_the_right_source():
     assert isinstance(build_source("live", WallClock(), sessions), LiveSource)
 
 
-def test_replay_mode_is_not_available_yet():
-    with pytest.raises(NotImplementedError, match="Phase 1"):
-        build_source("replay", WallClock(), StubSessions())
+def test_build_source_knows_replay():
+    from app.sources import ReplaySource
+
+    assert isinstance(build_source("replay", ReplayClock(RACE_TIME), StubSessions()), ReplaySource)
 
 
 def test_sources_satisfy_the_protocol():

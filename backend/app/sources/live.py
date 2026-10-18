@@ -6,7 +6,8 @@ OPENF1_API_TOKEN to return anything during a session. It is kept working
 rather than deleted: the pipeline is supposed to be source-agnostic, and a
 live path that has quietly rotted would make that claim untestable.
 """
-from typing import AsyncIterator, Optional
+from datetime import datetime
+from typing import AsyncIterator, Callable, Optional
 import asyncio
 import logging
 
@@ -24,11 +25,13 @@ class LiveSource:
 
     name = "live"
 
-    def __init__(self, clock: Clock, sessions, client=None, health=None):
+    def __init__(self, clock: Clock, sessions, client=None, health=None,
+                 sleep: Callable = asyncio.sleep):
         self.clock = clock
         self._sessions = sessions
         self._client = client or openf1_client
         self._health = health or health_manager
+        self._sleep = sleep
 
     async def ticks(self) -> AsyncIterator[TickData]:
         retry_delay = 1.0
@@ -37,12 +40,12 @@ class LiveSource:
         # Lap data changes once a lap, so it is refreshed on its own slower
         # cadence and reused across position polls.
         cached_laps: dict = {}
-        laps_fetched_at: Optional[float] = None
+        laps_fetched_at: Optional[datetime] = None
 
         while True:
             try:
                 if not self._sessions.is_session_active():
-                    await asyncio.sleep(5)
+                    await self._sleep(5)
                     continue
 
                 session = self._sessions.get_current_session()
@@ -54,12 +57,15 @@ class LiveSource:
                 intervals = await self._client.get_latest_intervals(session_key)
                 drivers_data = await self._client.get_drivers(session_key)
 
-                loop_now = asyncio.get_event_loop().time()
-                if laps_fetched_at is None or (loop_now - laps_fetched_at) >= config.POLL_LAPS_INTERVAL_S:
+                # Timed by the source's clock, which is the wall when live.
+                # Replay refreshes laps on the same cadence (replay/engine.py),
+                # and the live-equivalence test drives this with a fake clock.
+                now = self.clock.now()
+                if laps_fetched_at is None or (now - laps_fetched_at).total_seconds() >= config.POLL_LAPS_INTERVAL_S:
                     cached_laps = await self._client.get_latest_laps(
                         session_key, count=config.BATTLE_PACE_TREND_WINDOW
                     )
-                    laps_fetched_at = loop_now
+                    laps_fetched_at = now
                     self._health.record_successful_lap_poll()
                     logger.debug(f"Refreshed lap data for {len(cached_laps)} drivers")
 
@@ -79,15 +85,16 @@ class LiveSource:
                         drivers_info=drivers_info,
                         laps=cached_laps,
                         track_status=session.track_status,
+                        season=session.year,
                     )
 
                 retry_delay = config.POLL_POSITIONS_INTERVAL_S
-                await asyncio.sleep(config.POLL_POSITIONS_INTERVAL_S)
+                await self._sleep(config.POLL_POSITIONS_INTERVAL_S)
 
             except OpenF1APIError as e:
                 logger.error(f"OpenF1 API error in position polling: {e}")
                 self._health.record_error()
-                await asyncio.sleep(retry_delay)
+                await self._sleep(retry_delay)
                 retry_delay = min(retry_delay * 2, max_retry_delay)
 
             except asyncio.CancelledError:
@@ -96,4 +103,4 @@ class LiveSource:
             except Exception as e:
                 logger.exception(f"Unexpected error in position polling: {e}")
                 self._health.record_error()
-                await asyncio.sleep(retry_delay)
+                await self._sleep(retry_delay)

@@ -1,10 +1,15 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/index.py": {
+      "includeFiles": "data/sessions/**"
+    }
+  },
   "rewrites": [
     { "source": "/(.*)", "destination": "/api/index" }
   ],
   "env": {
-    "DATA_MODE": "mock",
+    "DATA_MODE": "replay",
     "DEMO_STATELESS": "true",
     "CORS_ORIGIN_REGEX": "https://[A-Za-z0-9-]+\\.vercel\\.app"
   }

@@ -12,7 +12,7 @@ interface BattlesResponse {
 
 export function useBattles(k: number = 5) {
   const { data, error, isLoading } = useSWR<BattlesResponse>(
-    `/battles/top?k=${k}`,
+    `/api/battles/top?k=${k}`,
     fetcher,
     {
       refreshInterval: 2000, // Poll every 2 seconds

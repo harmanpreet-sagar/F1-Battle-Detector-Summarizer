@@ -12,6 +12,9 @@ class DriverState(BaseModel):
     full_name: str
     team_name: str
     position: int
+    name_acronym: Optional[str] = None
+    # Hex without '#', as OpenF1's /drivers gives it, e.g. "E80020"
+    team_colour: Optional[str] = None
     last_lap_time_s: Optional[float] = None
     gap_to_leader_s: Optional[float] = None
     gap_to_ahead_s: Optional[float] = None
@@ -37,6 +40,21 @@ class BattleFlags(BaseModel):
     data_quality_warning: bool = False
 
 
+class ScoreBreakdown(BaseModel):
+    """
+    How battle_score was reached, so the UI can show its working.
+
+    gap, closing and pace are the weighted contributions (they sum to raw);
+    multiplier is the product of the condition penalties; score = raw * multiplier.
+    """
+    gap: float
+    closing: float
+    pace: float
+    raw: float
+    multiplier: float = 1.0
+    score: float
+
+
 class Battle(BaseModel):
     """A detected battle between two drivers."""
     battle_id: str = Field(..., description="Unique ID: {chaser}_{ahead}")
@@ -48,6 +66,12 @@ class Battle(BaseModel):
     closing_rate_s_per_s: Optional[float] = None
     pace_delta_s_per_lap: Optional[float] = None
     battle_score: float
+    score_breakdown: Optional[ScoreBreakdown] = None
+    # Championship points that change hands if the two cars swap, and the
+    # ordering that weighs them in. battle_score says how good the fight is;
+    # rank_score says where it goes in the list.
+    points_at_stake: int = 0
+    rank_score: float = 0.0
     intensity: Literal["HOT", "WATCH", "NONE"]
     explanation: str
     trend_gap_s: List[float] = Field(default_factory=list, description="Last 6 updates")
@@ -64,6 +88,7 @@ class SessionStatus(BaseModel):
     session_status: Literal["started", "finished", "aborted"]
     circuit_short_name: str
     meeting_name: str
+    year: Optional[int] = None
     current_lap: Optional[int] = None
     total_laps: Optional[int] = None
     track_status: Optional[Literal["green", "yellow", "red", "sc", "vsc"]] = None

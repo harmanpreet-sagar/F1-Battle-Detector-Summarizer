@@ -7,7 +7,7 @@ import type { SessionStatus } from '../types/api'
 
 export function useSession() {
   const { data, error, isLoading } = useSWR<SessionStatus>(
-    '/session/current',
+    '/api/session/current',
     fetcher,
     {
       refreshInterval: 10000, // Poll every 10 seconds

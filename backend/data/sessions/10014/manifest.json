@@ -1,0 +1,75 @@
+{
+  "circuit": "Sakhir",
+  "date_end": "2025-04-13T17:00:00+00:00",
+  "date_start": "2025-04-13T15:00:00+00:00",
+  "endpoints": {
+    "drivers": {
+      "bytes": 1466,
+      "hash": "c2e2d3d221d19d3f30c084f6b2911428869d048991e2a2320724d030073305ca",
+      "missing": false,
+      "rows": 20
+    },
+    "intervals": {
+      "bytes": 402977,
+      "hash": "5dd73a007eceaeb25a54b6ee68adbdafbb017ff8014d62cdf983c39624c681d0",
+      "missing": false,
+      "rows": 36876
+    },
+    "laps": {
+      "bytes": 36510,
+      "hash": "9d0dd1d670c0045981d6539f5704c88c9dc71631f40317d19523ef226fc7fc79",
+      "missing": false,
+      "rows": 1129
+    },
+    "overtakes": {
+      "bytes": 5165,
+      "hash": "d216fbc8d95c5871702dd47bb340b32c0144fa62efb309a46659aa2c4c633903",
+      "missing": false,
+      "rows": 642
+    },
+    "pit": {
+      "bytes": 951,
+      "hash": "a781baaf35a47cdb032b2b83cf0ec6cbd5c975db05f03eb123bf2b298db15729",
+      "missing": false,
+      "rows": 42
+    },
+    "position": {
+      "bytes": 6917,
+      "hash": "797e2027de65891b3c36df306358fd58c71cbb65eb11c3b7c7efdc47b0dae423",
+      "missing": false,
+      "rows": 1179
+    },
+    "race_control": {
+      "bytes": 2266,
+      "hash": "26e36c494bd90ae5667ac458043391ac60e74fd235f6623d73cbadaff0448675",
+      "missing": false,
+      "rows": 93
+    },
+    "session_result": {
+      "bytes": 504,
+      "hash": "fd2134d776c955b4de8d12e79a8d218ab66ab50fdf3274723b619b6021c4a111",
+      "missing": false,
+      "rows": 20
+    },
+    "starting_grid": {
+      "bytes": 22,
+      "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "missing": true,
+      "rows": 0
+    },
+    "stints": {
+      "bytes": 524,
+      "hash": "a1508b7b0df522b8a4c3d1c78d00c94073510d79ef83b8ec2d473863ac53d3f8",
+      "missing": false,
+      "rows": 62
+    }
+  },
+  "fetched_at": "2026-10-17T20:20:03.794584+00:00",
+  "gmt_offset": "03:00:00",
+  "meeting_name": "Bahrain Grand Prix",
+  "round": 4,
+  "schema_version": 1,
+  "session_key": 10014,
+  "session_name": "Race",
+  "year": 2025
+}

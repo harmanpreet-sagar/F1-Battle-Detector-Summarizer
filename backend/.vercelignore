@@ -4,7 +4,12 @@ __pycache__/
 **/__pycache__/
 *.pyc
 .pytest_cache/
+.coverage
+coverage.xml
 Dockerfile
 .dockerignore
 requirements-dev.txt
-data/
+# The cached races are the replay: they ship with the function (see
+# includeFiles in vercel.json). Anything else under data/ is local state.
+data/*
+!data/sessions/

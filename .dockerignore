@@ -1,0 +1,22 @@
+# Build context for the root Dockerfile. Host-built artifacts stay out: a
+# Windows node_modules copied into an Alpine image breaks the npm ci it follows.
+.git
+**/node_modules
+frontend/.next
+frontend/out
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+backend/.coverage
+backend/coverage.xml
+backend/tests
+docs
+private
+
+# Secrets and local config. compose passes backend/.env at runtime instead.
+**/.env
+**/.env*.local
+
+# Local state under data/; the cached races in data/sessions are the replay.
+backend/data/*
+!backend/data/sessions

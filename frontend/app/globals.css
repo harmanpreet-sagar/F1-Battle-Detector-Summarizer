@@ -3,11 +3,18 @@
 @tailwind utilities;
 
 :root {
-  --foreground-rgb: 255, 255, 255;
-  --background-rgb: 21, 21, 30;
+  --foreground-rgb: 242, 242, 245;
+  --background-rgb: 11, 11, 16;
 }
 
 body {
   color: rgb(var(--foreground-rgb));
   background: rgb(var(--background-rgb));
+}
+
+@layer utilities {
+  /* Numbers that change in place must not shift their neighbours. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
 }

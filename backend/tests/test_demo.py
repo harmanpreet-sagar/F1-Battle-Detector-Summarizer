@@ -239,14 +239,14 @@ def test_endpoints_serve_the_demo_without_a_poll_loop(monkeypatch):
     monkeypatch.setattr(config, "DEMO_STATELESS", True)
     client = TestClient(app)
 
-    battles = client.get("/battles/top?k=5&min_intensity=WATCH").json()
+    battles = client.get("/api/battles/top?k=5&min_intensity=WATCH").json()
     assert battles["detected_at"] is not None
     assert battles["battles"], "no battles served in stateless mode"
     assert battles["battles"][0]["chaser_name"]
 
-    session = client.get("/session/current").json()
+    session = client.get("/api/session/current").json()
     assert session["session_name"] == "Race"
     assert 1 <= session["current_lap"] <= session["total_laps"]
 
-    assert client.get("/health").json()["status"] == "healthy"
-    assert client.get("/state/latest").json()["count"] == 20
+    assert client.get("/api/health").json()["status"] == "healthy"
+    assert client.get("/api/state/latest").json()["count"] == 20

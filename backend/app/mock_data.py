@@ -188,6 +188,7 @@ class MockDataGenerator:
                 driver_number=driver["number"],
                 full_name=driver["name"],
                 team_name=driver["team"],
+                name_acronym=driver["name"].split()[-1][:3].upper(),
                 position=position,
                 last_lap_time_s=self._lap_time(position, lap_number),
                 gap_to_leader_s=cumulative_gap_to_leader if position > 1 else 0.0,

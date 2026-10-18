@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import logging
 
-from app.models import Battle, BattleFlags, DriverState
+from app.models import Battle, BattleFlags, DriverState, ScoreBreakdown
 from app.config import config
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,103 @@ class TrackedBattle:
     distinct_samples: int
 
 
+def within_one_second(season: Optional[int]) -> str:
+    """What a sub-second gap buys the chaser under that year's rules."""
+    if season is not None and season < 2026:
+        return "Within DRS range"
+    return "Within 1s (Overtake Mode range)"
+
+
+# Race points for P1..P10. Unchanged since 2010; the fastest-lap point of
+# 2019-2024 needed a top-ten finish and a specific lap, so it is left out.
+RACE_POINTS = (25, 18, 15, 12, 10, 8, 6, 4, 2, 1)
+
+
+def points_for(position: int) -> int:
+    return RACE_POINTS[position - 1] if 1 <= position <= len(RACE_POINTS) else 0
+
+
+def points_at_stake(ahead_position: int) -> int:
+    """
+    Points that change hands if the chaser passes: the lead is worth 7, P10
+    against P11 still 1, and nothing below the points matters to the table.
+    """
+    return points_for(ahead_position) - points_for(ahead_position + 1)
+
+
+# The most any one pass is worth (the lead), which the boost is scaled by.
+MAX_POINTS_AT_STAKE = max(points_at_stake(p) for p in range(1, len(RACE_POINTS) + 1))
+
+
+def rank_score(battle_score: float, ahead_position: int) -> float:
+    """
+    Where a battle goes in the list: its score, boosted by what it is for.
+
+    The boost runs from x1 (no points at stake) to x2 (the lead), so two equal
+    fights are ordered by position, a fight for the lead beats almost anything,
+    and a genuinely hot fight at the back can still outrank a dull one in the
+    points. HOT/WATCH are still decided by battle_score alone.
+    """
+    return battle_score * (1 + points_at_stake(ahead_position) / MAX_POINTS_AT_STAKE)
+
+
+# Weights of the three terms in the battle score. They sum to 1.
+GAP_WEIGHT = 0.5
+CLOSING_WEIGHT = 0.3
+PACE_WEIGHT = 0.2
+
+
+def score_breakdown(
+    gap_s: float,
+    closing_rate: Optional[float],
+    pace_delta: Optional[float],
+    flags: BattleFlags
+) -> ScoreBreakdown:
+    """
+    The battle score and each term's contribution to it.
+
+    The single place the score is computed: calculate_battle_score reads its
+    total, and the API serves the parts so the UI can explain the number.
+    """
+    # Base score from gap (0-1, smaller gap = higher score)
+    gap_score = max(0, 1 - (gap_s / config.BATTLE_MAX_GAP_S))
+
+    # Closing rate contribution (0-1)
+    # Negative closing_rate = gap is closing (chaser catching up) = exciting!
+    closing_score = 0.0
+    if closing_rate is not None and closing_rate < 0:
+        closing_score = min(1.0, abs(closing_rate) * 10)
+
+    # Pace advantage contribution (0-1)
+    pace_score = 0.0
+    if pace_delta is not None and pace_delta < 0:
+        # Negative = chaser is faster
+        pace_score = min(1.0, abs(pace_delta) * 2)
+
+    gap_part = gap_score * GAP_WEIGHT
+    closing_part = closing_score * CLOSING_WEIGHT
+    pace_part = pace_score * PACE_WEIGHT
+    raw_score = gap_part + closing_part + pace_part
+
+    # Penalties for special conditions
+    multiplier = 1.0
+    if flags.under_yellow:
+        multiplier *= 0.5
+    if flags.pit_window_active:
+        multiplier *= 0.3
+    if flags.data_quality_warning:
+        multiplier *= 0.7
+
+    return ScoreBreakdown(
+        gap=gap_part,
+        closing=closing_part,
+        pace=pace_part,
+        raw=raw_score,
+        multiplier=multiplier,
+        score=raw_score * multiplier,
+    )
+
+
 def calculate_battle_score(
     gap_s: float,
     closing_rate: Optional[float],
@@ -32,36 +129,10 @@ def calculate_battle_score(
 ) -> float:
     """
     Calculate battle score based on gap, closing rate, and pace.
-    
+
     Returns a score between 0 and 1, where higher is more intense.
     """
-    # Base score from gap (0-1, smaller gap = higher score)
-    gap_score = max(0, 1 - (gap_s / config.BATTLE_MAX_GAP_S))
-    
-    # Closing rate contribution (0-1)
-    # Negative closing_rate = gap is closing (chaser catching up) = exciting!
-    closing_score = 0.0
-    if closing_rate is not None and closing_rate < 0:
-        closing_score = min(1.0, abs(closing_rate) * 10)
-    
-    # Pace advantage contribution (0-1)
-    pace_score = 0.0
-    if pace_delta is not None and pace_delta < 0:
-        # Negative = chaser is faster
-        pace_score = min(1.0, abs(pace_delta) * 2)
-    
-    # Weighted combination
-    raw_score = (gap_score * 0.5) + (closing_score * 0.3) + (pace_score * 0.2)
-    
-    # Apply penalties for special conditions
-    if flags.under_yellow:
-        raw_score *= 0.5
-    if flags.pit_window_active:
-        raw_score *= 0.3
-    if flags.data_quality_warning:
-        raw_score *= 0.7
-    
-    return raw_score
+    return score_breakdown(gap_s, closing_rate, pace_delta, flags).score
 
 
 def _gap_sample_time(state: DriverState) -> datetime:
@@ -192,6 +263,7 @@ class BattleDetector:
         track_status: Optional[str] = None,
         *,
         now: datetime,
+        season: Optional[int] = None,
     ) -> List[Battle]:
         """
         Detect battles between adjacent drivers and cache the result.
@@ -207,10 +279,14 @@ class BattleDetector:
                 seconds at 10x speed and never fire at all in a batch run that
                 processes thousands of ticks in a few wall seconds.
 
+            season: Championship year, for the wording only. 2026 dropped
+                DRS for Overtake Mode; unknown means the current rules.
+
         Returns:
-            List of Battle objects sorted by score (highest first).
+            List of Battle objects, highest rank_score first: the battle
+            score weighted by the points at stake (see rank_score).
         """
-        battles = self._detect(driver_states, driver_histories, track_status, now)
+        battles = self._detect(driver_states, driver_histories, track_status, now, season)
         self._latest = battles
         self._detected_at = now
         return list(battles)
@@ -221,6 +297,7 @@ class BattleDetector:
         driver_histories: Dict[int, List[DriverState]],
         track_status: Optional[str],
         now: datetime,
+        season: Optional[int] = None,
     ) -> List[Battle]:
         if not driver_states:
             logger.warning("detect: No driver states provided")
@@ -269,7 +346,9 @@ class BattleDetector:
             # 3. Determine battle flags
             flags = BattleFlags(
                 pit_window_active=detect_pit_window(chaser_history),
-                under_yellow=(track_status in ["yellow", "sc", "vsc"]) if track_status else False,
+                # A red flag stops the race outright; whatever gaps are left
+                # over from before it are not a battle.
+                under_yellow=(track_status in ["yellow", "sc", "vsc", "red"]) if track_status else False,
                 data_quality_warning=(
                     chaser.data_confidence != "high" or
                     ahead.data_confidence != "high"
@@ -277,7 +356,8 @@ class BattleDetector:
             )
 
             # 4. Calculate battle score
-            score = calculate_battle_score(gap, closing_rate, pace_delta, flags)
+            breakdown = score_breakdown(gap, closing_rate, pace_delta, flags)
+            score = breakdown.score
 
             # Determine intensity
             if score > config.BATTLE_HOT_SCORE and gap < config.BATTLE_HOT_GAP_S and closing_rate and closing_rate < 0:
@@ -318,11 +398,11 @@ class BattleDetector:
             if pace_delta is not None and pace_delta < 0:
                 explanation_parts.append(f"{abs(pace_delta):.2f}s/lap quicker")
             if gap < 1.0:
-                explanation_parts.append("Within DRS range")
+                explanation_parts.append(within_one_second(season))
             if flags.pit_window_active:
                 explanation_parts.append("Pit window active")
             if not explanation_parts:
-                explanation_parts.append(f"Gap: {gap:.2f}s")
+                explanation_parts.append(f"Gap: {gap:.3f}s")
 
             explanation = " • ".join(explanation_parts)
 
@@ -337,6 +417,9 @@ class BattleDetector:
                 closing_rate_s_per_s=closing_rate,
                 pace_delta_s_per_lap=pace_delta,
                 battle_score=score,
+                score_breakdown=breakdown,
+                points_at_stake=points_at_stake(ahead.position),
+                rank_score=rank_score(score, ahead.position),
                 intensity=intensity,
                 explanation=explanation,
                 trend_gap_s=trend_gaps,
@@ -352,7 +435,8 @@ class BattleDetector:
         self._evict(current_time)
 
         # Sort by score
-        battles.sort(key=lambda b: b.battle_score, reverse=True)
+        # Battles near the front matter more: they move points.
+        battles.sort(key=lambda b: b.rank_score, reverse=True)
 
         logger.debug(f"Detected {len(battles)} battles (tracked {len(self._tracked)} total)")
         return battles

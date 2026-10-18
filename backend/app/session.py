@@ -53,6 +53,7 @@ class SessionManager:
                     session_status="started",  # OpenF1 doesn't always provide this
                     circuit_short_name=session_data.get("circuit_short_name", "Unknown"),
                     meeting_name=session_data.get("meeting_official_name") or session_data.get("meeting_name", "Unknown"),
+                    year=session_data.get("year"),
                     current_lap=None,  # Will be updated from position data
                     total_laps=None,  # Not always available in session endpoint
                     track_status=None,  # Will be inferred from live data or session status

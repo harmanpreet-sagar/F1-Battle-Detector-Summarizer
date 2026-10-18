@@ -1,0 +1,75 @@
+{
+  "circuit": "Hungaroring",
+  "date_end": "2025-08-03T13:14:10.885000+00:00",
+  "date_start": "2025-08-03T13:00:00+00:00",
+  "endpoints": {
+    "drivers": {
+      "bytes": 1457,
+      "hash": "828ff1d089b2376a3edd11c5ef5c73717c0163630d5c0391e5c2c233bf2424ad",
+      "missing": false,
+      "rows": 20
+    },
+    "intervals": {
+      "bytes": 37735,
+      "hash": "28d057286bb7a2d3c1094aff23201d8892a554375b32a473ad976fc640ce3497",
+      "missing": false,
+      "rows": 3111
+    },
+    "laps": {
+      "bytes": 5928,
+      "hash": "7c31191319d03a5f92f339c03ca5d454a4804dc3f08632eabb03473c5e6538b9",
+      "missing": false,
+      "rows": 161
+    },
+    "overtakes": {
+      "bytes": 22,
+      "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "missing": true,
+      "rows": 0
+    },
+    "pit": {
+      "bytes": 147,
+      "hash": "c50852fcb4914d393c5dfea493f0a4ecdb38b26de74cd3c9f39834dcf8bc643d",
+      "missing": false,
+      "rows": 1
+    },
+    "position": {
+      "bytes": 674,
+      "hash": "4da809fd429bd1e7e27c124230e85adb1465bf37c2c08723bbb2cd365bf63c6c",
+      "missing": false,
+      "rows": 91
+    },
+    "race_control": {
+      "bytes": 725,
+      "hash": "0b62d14f245c5b389979819982bdc0e0fa7e0a3c6d36203f55daf818da2e2cf4",
+      "missing": false,
+      "rows": 23
+    },
+    "session_result": {
+      "bytes": 22,
+      "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "missing": true,
+      "rows": 0
+    },
+    "starting_grid": {
+      "bytes": 22,
+      "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "missing": true,
+      "rows": 0
+    },
+    "stints": {
+      "bytes": 290,
+      "hash": "b09ce661a5e37e43809d64fa365cb8887c63953e528bd1b4217f30c0a4fadc18",
+      "missing": false,
+      "rows": 21
+    }
+  },
+  "fetched_at": "2026-09-23T21:32:38.051021+00:00",
+  "gmt_offset": "02:00:00",
+  "meeting_name": "Hungarian Grand Prix",
+  "round": 14,
+  "schema_version": 1,
+  "session_key": 9928,
+  "session_name": "Race",
+  "year": 2025
+}

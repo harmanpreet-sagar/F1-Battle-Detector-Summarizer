@@ -42,6 +42,26 @@ def parse_gap(value: Any) -> Optional[float]:
     return None
 
 
+def _tyre(stint: Optional[Dict], driver_laps: List[Dict]):
+    """
+    (compound, age in laps) from the current stint, or (None, None).
+
+    Age is the tyre's age when fitted plus the laps run on it. The lap being
+    run now is the last completed one plus one, and a stint that starts on
+    lap n has done no laps on lap n.
+    """
+    if not stint:
+        return None, None
+    compound = stint.get("compound")
+    lap_start = stint.get("lap_start")
+    if lap_start is None:
+        return compound, None
+    completed = driver_laps[-1].get("lap_number") if driver_laps else None
+    current = (completed or 0) + 1
+    age = (stint.get("tyre_age_at_start") or 0) + max(0, current - lap_start)
+    return compound, age
+
+
 class StateManager:
     """Manages in-memory state for all drivers."""
     
@@ -83,7 +103,12 @@ class StateManager:
             return {
                 "driver_number": state.driver_number,
                 "full_name": state.full_name,
-                "team_name": state.team_name
+                "team_name": state.team_name,
+                "name_acronym": state.name_acronym,
+                "team_colour": state.team_colour,
+                "tire_compound": state.tire_compound,
+                "tire_age_laps": state.tire_age_laps,
+                "pit_stops_count": state.pit_stops_count,
             }
         return None
     
@@ -93,6 +118,8 @@ class StateManager:
         drivers_info: Dict[int, Dict],
         intervals: Optional[List[Dict]] = None,
         laps: Optional[Dict[int, List[Dict]]] = None,
+        stints: Optional[Dict[int, Dict]] = None,
+        pit_stops: Optional[Dict[int, int]] = None,
         *,
         now: datetime,
     ):
@@ -105,6 +132,8 @@ class StateManager:
             intervals: Latest /intervals row per driver. /position carries no gap
                 fields, so without this every gap is None and no battle is detectable.
             laps: Recent completed laps per driver, oldest first (/laps).
+            stints: Each driver's current stint row (/stints), replay only.
+            pit_stops: Pit stops so far per driver (/pit), replay only.
             now: Current time *in the data's own frame* - wall time when live,
                 race time under replay. Keyword-only and required on purpose: a
                 default would silently reintroduce wall-clock confidence
@@ -117,6 +146,8 @@ class StateManager:
             if row.get("driver_number") is not None
         }
         laps = laps or {}
+        stints = stints or {}
+        pit_stops = pit_stops or {}
 
         for pos_data in positions:
             driver_num = pos_data.get("driver_number")
@@ -125,10 +156,21 @@ class StateManager:
 
             driver_info = drivers_info.get(driver_num, {})
 
-            # Calculate data confidence based on recency, measured against the
-            # caller's clock rather than the wall.
             updated_at = parse_openf1_timestamp(pos_data.get("date")) or now
-            age_seconds = (now - updated_at).total_seconds()
+
+            gap_to_ahead, gap_to_leader, gap_updated_at = self._resolve_gaps(
+                driver_num, intervals_by_driver.get(driver_num)
+            )
+
+            # Confidence from recency, measured against the caller's clock
+            # rather than the wall, and against the freshest row this driver
+            # has. /position emits only when a car changes place, so a car
+            # holding P5 for ten minutes has a ten-minute-old position row that
+            # is unchanged, not stale. Scoring that age rated nearly every car
+            # 'low' and cut every battle's score by 30% - in a full replay of
+            # the 2025 Hungarian GP, two ticks out of 3,863 showed a battle.
+            freshest = max(updated_at, gap_updated_at) if gap_updated_at else updated_at
+            age_seconds = (now - freshest).total_seconds()
 
             if age_seconds < config.DATA_CONFIDENCE_MEDIUM_S:
                 confidence = "high"
@@ -136,10 +178,6 @@ class StateManager:
                 confidence = "medium"
             else:
                 confidence = "low"
-
-            gap_to_ahead, gap_to_leader, gap_updated_at = self._resolve_gaps(
-                driver_num, intervals_by_driver.get(driver_num)
-            )
 
             # A gap that has not refreshed in several interval cycles is no longer
             # trustworthy for closing-rate work, even if the position row is fresh.
@@ -150,18 +188,21 @@ class StateManager:
 
             driver_laps = laps.get(driver_num) or []
             last_lap_time_s = driver_laps[-1].get("lap_duration") if driver_laps else None
+            compound, tire_age = _tyre(stints.get(driver_num), driver_laps)
 
             driver_state = DriverState(
                 driver_number=driver_num,
                 full_name=driver_info.get("full_name") or driver_info.get("name_acronym", f"Driver {driver_num}"),
                 team_name=driver_info.get("team_name", "Unknown"),
+                name_acronym=driver_info.get("name_acronym"),
+                team_colour=driver_info.get("team_colour"),
                 position=pos_data.get("position", 20),
                 last_lap_time_s=last_lap_time_s,
                 gap_to_leader_s=gap_to_leader,
                 gap_to_ahead_s=gap_to_ahead,
-                tire_compound=None,  # Not in position data
-                tire_age_laps=None,
-                pit_stops_count=0,  # Will be calculated
+                tire_compound=compound,
+                tire_age_laps=tire_age,
+                pit_stops_count=pit_stops.get(driver_num, 0),
                 updated_at=updated_at,
                 gap_updated_at=gap_updated_at,
                 data_confidence=confidence
@@ -191,6 +232,11 @@ class StateManager:
 
         return previous.gap_to_ahead_s, previous.gap_to_leader_s, previous.gap_updated_at
     
+    def drop_driver(self, driver_number: int):
+        """Forget one driver entirely: a retirement, not a missed poll."""
+        self.current_state.pop(driver_number, None)
+        self.history.pop(driver_number, None)
+
     def clear(self):
         """Clear all state (e.g., between sessions)."""
         self.current_state.clear()

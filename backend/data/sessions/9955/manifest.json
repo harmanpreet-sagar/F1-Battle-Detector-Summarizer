@@ -1,0 +1,75 @@
+{
+  "circuit": "Spielberg",
+  "date_end": "2025-06-29T15:00:00+00:00",
+  "date_start": "2025-06-29T13:00:00+00:00",
+  "endpoints": {
+    "drivers": {
+      "bytes": 1457,
+      "hash": "74d073c3eedb64edb8660c9a0a537d2e432368e28c261a7e8e851bc5e9f03f9b",
+      "missing": false,
+      "rows": 20
+    },
+    "intervals": {
+      "bytes": 259058,
+      "hash": "7ba47bbf97c449e305c24afac7f54f215a6eaf5afb8c45c8a969afddfd8e6ed5",
+      "missing": false,
+      "rows": 21944
+    },
+    "laps": {
+      "bytes": 35382,
+      "hash": "d8ffffb27eb74df7bed7183e64b67fef212023eb2473ea915bf138bdd2eb03e2",
+      "missing": false,
+      "rows": 1128
+    },
+    "overtakes": {
+      "bytes": 2524,
+      "hash": "4743074ee3c4ad8aac020cc6d278aee3b7f994a7518993fc747a40a5baa4d8a6",
+      "missing": false,
+      "rows": 252
+    },
+    "pit": {
+      "bytes": 791,
+      "hash": "be6e70df4922287698f7bbf87890d26d503706b6f0a88870ae1bf27fd7025d80",
+      "missing": false,
+      "rows": 32
+    },
+    "position": {
+      "bytes": 3253,
+      "hash": "c26c232400ef6faba4754a4ab667dd49bb6dde82c314abd2511c930d42336164",
+      "missing": false,
+      "rows": 519
+    },
+    "race_control": {
+      "bytes": 2358,
+      "hash": "1ef79a9797bd8a99b50c3a4a8048632c722ee5bb343bfe6d68856aaf7a10d70e",
+      "missing": false,
+      "rows": 119
+    },
+    "session_result": {
+      "bytes": 404,
+      "hash": "a6824dec2d60453bc0da24db7d59a61f7617e0d645366346df377dd7b6dd899b",
+      "missing": false,
+      "rows": 20
+    },
+    "starting_grid": {
+      "bytes": 22,
+      "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "missing": true,
+      "rows": 0
+    },
+    "stints": {
+      "bytes": 535,
+      "hash": "9170eb6180cc36d143a3ad9cbed62aedd9f6d4bd3a17ce7dab8bc1ae51a4147e",
+      "missing": false,
+      "rows": 52
+    }
+  },
+  "fetched_at": "2026-10-17T20:24:08.470720+00:00",
+  "gmt_offset": "02:00:00",
+  "meeting_name": "Austrian Grand Prix",
+  "round": 11,
+  "schema_version": 1,
+  "session_key": 9955,
+  "session_name": "Race",
+  "year": 2025
+}

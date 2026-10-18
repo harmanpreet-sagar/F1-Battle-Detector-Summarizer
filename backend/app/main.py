@@ -1,19 +1,25 @@
 """
 FastAPI application entry point with background tasks for polling OpenF1 API.
 """
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
-from typing import Dict
+from pathlib import Path
+from typing import Dict, Optional
 import asyncio
 import logging
+import time
 
 from app import demo
-from app.clock import WallClock, utcnow
+from app.clock import ReplayClock, WallClock, utcnow
 from app.config import config
 from app.health import get_health_status, health_manager
 from app.openf1_client import openf1_client
 from app.pipeline import RacePipeline
+from app.replay.broadcast import get_broadcast
+from app.replay.store import SCHEMA_VERSION, SessionStore
 from app.session import session_manager
 from app.sources import build_source
 from app.mock_data import mock_data_generator
@@ -36,14 +42,14 @@ def current_pipeline() -> RacePipeline:
     The pipeline endpoints read from.
 
     Under DEMO_STATELESS there is no background loop to have filled one, so the
-    mock race is replayed up to the current instant and thrown away after the
-    response. Every handler below is unchanged either way - that is the whole
-    reason detection was moved behind a pipeline object.
-
-    Phase 1 registers a second long-running one under "replay" and flips
-    app.state.active_pipeline; no request handler changes.
+    race - the cached replay, or the mock one - is rebuilt up to the current
+    instant and thrown away after the response. Every handler below is
+    unchanged either way - that is the whole reason detection was moved behind
+    a pipeline object.
     """
     if config.DEMO_STATELESS:
+        if config.DATA_MODE == "replay":
+            return get_broadcast().build_pipeline(utcnow())
         return demo.build_pipeline(utcnow())
     return app.state.pipelines[app.state.active_pipeline]
 
@@ -57,6 +63,13 @@ def reset_for_new_session(session_key):
 async def poll_session_status():
     """Background task to poll for current F1 session."""
     retry_delay = 30.0
+
+    if config.DATA_MODE == "replay":
+        # The broadcast schedule is the session: /session/current reads it
+        # straight from the clock, and ReplaySource marks the first tick of
+        # each race as a reset. Nothing here needs to poll, least of all
+        # OpenF1.
+        return
 
     while True:
         try:
@@ -149,18 +162,27 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="F1 Battle Detector API",
-    description="Real-time F1 battle detection and tracking",
+    description="F1 race replay that ranks the hottest on-track battles",
     version="0.1.0",
     lifespan=lifespan,
+    # Everything the backend serves lives under /api, docs included, so that
+    # the container path can serve the frontend at / from the same origin.
+    docs_url="/api/docs",
+    swagger_ui_oauth2_redirect_url="/api/docs/oauth2-redirect",
+    redoc_url=None,
+    openapi_url="/api/openapi.json",
 )
+api = APIRouter(prefix="/api")
 
 # Named pipelines, registered at import time rather than in lifespan so that a
 # TestClient built without starting lifespan still has one to read.
 _pipelines: Dict[str, RacePipeline] = {
     "live": RacePipeline(clock=WallClock(), name="live"),
+    # Its clock is moved to race time by ReplaySource before every tick.
+    "replay": RacePipeline(clock=ReplayClock(utcnow()), name="replay"),
 }
 app.state.pipelines = _pipelines
-app.state.active_pipeline = "live"
+app.state.active_pipeline = "replay" if config.DATA_MODE == "replay" else "live"
 
 # CORS middleware
 app.add_middleware(
@@ -174,20 +196,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+_served_first_request = False
 
-@app.get("/")
+
+@app.middleware("http")
+async def server_timing(request, call_next):
+    """
+    The app's own time on each request, as a Server-Timing header. From the
+    outside a request on Vercel is mostly network and routing; this is the
+    part the stateless rebuild costs. The first request on an instance is
+    marked, since that is where a cold start's indexing lands.
+    """
+    global _served_first_request
+    first = not _served_first_request
+    _served_first_request = True
+    start = time.perf_counter()
+    response = await call_next(request)
+    timing = f"app;dur={(time.perf_counter() - start) * 1000:.1f}"
+    response.headers["Server-Timing"] = timing + (', first;desc="first request on this instance"' if first else "")
+    return response
+
+
+@api.get("")
 async def root():
     """Root endpoint."""
     return {
         "message": "F1 Battle Detector API",
         "version": "0.1.0",
-        "docs": "/docs",
+        "mode": config.DATA_MODE,
+        "docs": "/api/docs",
     }
 
 
-@app.get("/health")
+@api.get("/health")
 async def health():
-    """Health check endpoint."""
+    """Health check endpoint, plus which mode is serving and where replay is."""
     if config.DEMO_STATELESS:
         # There is no poll loop to have recorded a successful poll, and the
         # default reading of that absence - "cannot connect to OpenF1" - is
@@ -195,12 +238,80 @@ async def health():
         # construction.
         health_manager.record_successful_position_poll()
         health_manager.active_session = True
-    return get_health_status()
+    status = get_health_status()
+    status["mode"] = config.DATA_MODE
+    status["replay"] = None
+    if config.DATA_MODE == "replay":
+        broadcast = get_broadcast()
+        position = broadcast.locate(utcnow())
+        manifest = broadcast.replay(position.index).archive.manifest
+        status["replay"] = {
+            "session_key": position.session_key,
+            "race_time": position.race_time.isoformat(),
+            "progress_pct": round(position.progress * 100, 1),
+            "races": len(broadcast.slots),
+            # The cache format this build reads, and the one the race on air
+            # was written with. A mismatch is refused at load time.
+            "schema_version": SCHEMA_VERSION,
+            "manifest_schema_version": manifest.schema_version,
+        }
+    return status
 
 
-@app.get("/session/current")
+@api.get("/replay/status")
+async def get_replay_status():
+    """
+    Where the broadcast is: race, race time, lap, track status, speed.
+
+    Outside replay mode every field but `mode` is null, so the frontend can
+    call it unconditionally and decide what header to draw from `mode`.
+    """
+    if config.DATA_MODE != "replay":
+        return {
+            "mode": config.DATA_MODE,
+            **{field: None for field in (
+                "session_key", "meeting_name", "circuit", "year", "race_time",
+                "elapsed_s", "lap", "total_laps", "track_status", "stoppage", "speed",
+                "progress_pct", "next_race",
+            )},
+        }
+    return {"mode": "replay", **get_broadcast().status_at(utcnow())}
+
+
+@api.get("/replay/sessions")
+async def get_replay_sessions():
+    """Every cached race, from its manifest, oldest first."""
+    playlist = set()
+    if config.DATA_MODE == "replay":
+        playlist = {slot.replay.session_key for slot in get_broadcast().slots}
+    return {
+        "sessions": [
+            {
+                "session_key": manifest.session_key,
+                "year": manifest.year,
+                "round": manifest.round,
+                "circuit": manifest.circuit,
+                "meeting_name": manifest.meeting_name,
+                "session_name": manifest.session_name,
+                "date_start": manifest.date_start.isoformat() if manifest.date_start else None,
+                "rows": manifest.total_rows,
+                "bytes": manifest.total_bytes,
+                "schema_version": manifest.schema_version,
+                "in_playlist": manifest.session_key in playlist,
+            }
+            for manifest in SessionStore().manifests()
+        ],
+    }
+
+
+@api.get("/session/current")
 async def get_current_session():
     """Get current active F1 session."""
+    if config.DATA_MODE == "replay":
+        # A pure function of the wall clock on both paths, so it agrees with
+        # whatever the pipeline is showing.
+        return get_broadcast().session_at(utcnow()).model_dump()
+
     if config.DEMO_STATELESS:
         # No session poll loop either; derive the lap from the clock.
         return demo.build_session(utcnow()).model_dump()
@@ -217,7 +328,7 @@ async def get_current_session():
         }
 
 
-@app.get("/state/latest")
+@api.get("/state/latest")
 async def get_latest_state():
     """Get latest state for all drivers."""
     states = current_pipeline().current_states()
@@ -239,7 +350,7 @@ async def get_latest_state():
     }
 
 
-@app.get("/battles/top")
+@api.get("/battles/top")
 async def get_top_battles(k: int = 5, min_intensity: str = "WATCH"):
     """
     Get top K battles filtered by minimum intensity.
@@ -282,13 +393,18 @@ async def get_top_battles(k: int = 5, min_intensity: str = "WATCH"):
         chaser_info = pipeline.driver_info(battle.chaser_driver_number)
         ahead_info = pipeline.driver_info(battle.ahead_driver_number)
 
-        if chaser_info:
-            battle_dict["chaser_name"] = chaser_info["full_name"]
-            battle_dict["chaser_team"] = chaser_info["team_name"]
-
-        if ahead_info:
-            battle_dict["ahead_name"] = ahead_info["full_name"]
-            battle_dict["ahead_team"] = ahead_info["team_name"]
+        for side, info in (("chaser", chaser_info), ("ahead", ahead_info)):
+            if not info:
+                continue
+            battle_dict[f"{side}_name"] = info["full_name"]
+            battle_dict[f"{side}_team"] = info["team_name"]
+            battle_dict[f"{side}_acronym"] = info["name_acronym"]
+            battle_dict[f"{side}_team_colour"] = info["team_colour"]
+            battle_dict[f"{side}_tyre"] = {
+                "compound": info["tire_compound"],
+                "age_laps": info["tire_age_laps"],
+                "pit_stops": info["pit_stops_count"],
+            }
 
         enriched_battles.append(battle_dict)
 
@@ -303,7 +419,7 @@ async def get_top_battles(k: int = 5, min_intensity: str = "WATCH"):
     }
 
 
-@app.get("/drivers/{driver_number}/trend")
+@api.get("/drivers/{driver_number}/trend")
 async def get_driver_trend(driver_number: int, points: int = 10):
     """Get gap trend for specific driver."""
     history = current_pipeline().history(driver_number)
@@ -333,6 +449,46 @@ async def get_driver_trend(driver_number: int, points: int = 10):
         "trend": trend_data,
         "count": len(trend_data)
     }
+
+
+app.include_router(api)
+
+
+def mount_frontend(target: FastAPI, directory: Optional[str]) -> bool:
+    """
+    Serve the exported frontend at /, after every /api route.
+
+    Starlette matches routes in order, so mounting last is what keeps /api
+    winning over a static file of the same name. A missing directory is not an
+    error: running the backend alone, or on Vercel, is normal.
+    """
+    if not directory or not Path(directory).is_dir():
+        if directory:
+            logger.warning(f"FRONTEND_DIR={directory} does not exist; serving the API only")
+        return False
+    target.mount("/", StaticFiles(directory=directory, html=True), name="frontend")
+    logger.info(f"Serving the frontend from {directory}")
+    return True
+
+
+def serve_root(target: FastAPI, directory: Optional[str]) -> None:
+    """
+    What / is: the dashboard when there is one to serve, else a pointer to /api.
+
+    Without the redirect, opening the backend's own URL on Vercel - where the
+    frontend is a separate project - answers {"detail": "Not Found"}, which
+    reads as a broken deployment rather than an API living one level down.
+    """
+    if mount_frontend(target, directory):
+        return
+
+    async def to_api():
+        return RedirectResponse("/api")
+
+    target.add_api_route("/", to_api, include_in_schema=False, name="root_redirect")
+
+
+serve_root(app, config.FRONTEND_DIR)
 
 
 if __name__ == "__main__":

@@ -1,9 +1,10 @@
-"""Data sources feeding the pipeline: live, mock, and (Phase 1) replay."""
+"""Data sources feeding the pipeline: live, mock and replay."""
 from app.sources.base import DataSource
 from app.sources.live import LiveSource
 from app.sources.mock import MockSource
+from app.sources.replay import ReplaySource
 
-__all__ = ["DataSource", "LiveSource", "MockSource", "build_source"]
+__all__ = ["DataSource", "LiveSource", "MockSource", "ReplaySource", "build_source"]
 
 
 def build_source(mode: str, clock, sessions) -> DataSource:
@@ -13,7 +14,5 @@ def build_source(mode: str, clock, sessions) -> DataSource:
     if mode == "live":
         return LiveSource(clock, sessions)
     if mode == "replay":
-        raise NotImplementedError(
-            "DATA_MODE=replay arrives in Phase 1; use mock or live for now"
-        )
+        return ReplaySource(clock)
     raise ValueError(f"unknown DATA_MODE {mode!r}")

@@ -11,6 +11,7 @@ from app.battle import (
     calculate_closing_rate,
     calculate_pace_delta,
     detect_pit_window,
+    score_breakdown,
 )
 from app.config import config
 from app.models import BattleFlags, DriverState
@@ -496,3 +497,120 @@ def test_pit_window_flag_is_still_populated(detector):
     histories[44][-2].gap_to_ahead_s = 0.35
 
     assert detect_pit_window(histories[44]) is True
+
+
+@pytest.mark.parametrize("season,expected", [
+    (2023, "Within DRS range"),
+    (2025, "Within DRS range"),
+    (2026, "Within 1s (Overtake Mode range)"),
+    # Unknown means today's rules, which have no DRS.
+    (None, "Within 1s (Overtake Mode range)"),
+])
+def test_sub_second_wording_follows_the_rules_of_the_season(season, expected):
+    from app.battle import within_one_second
+
+    assert within_one_second(season) == expected
+
+
+# --------------------------------------------------------------------------
+# Score breakdown
+# --------------------------------------------------------------------------
+
+def test_score_breakdown_parts_sum_to_score():
+    """The parts the UI shows add up to the score the detector ranks by."""
+    parts = score_breakdown(0.6, -0.04, -0.4, BattleFlags())
+
+    assert parts.gap + parts.closing + parts.pace == pytest.approx(parts.raw)
+    assert parts.multiplier == 1.0
+    assert parts.score == pytest.approx(parts.raw)
+    assert parts.score == calculate_battle_score(0.6, -0.04, -0.4, BattleFlags())
+
+
+def test_score_breakdown_carries_penalties():
+    """Penalties scale the score but leave the raw parts alone."""
+    clean = score_breakdown(1.0, -0.05, -0.2, BattleFlags())
+    flagged = score_breakdown(1.0, -0.05, -0.2, BattleFlags(under_yellow=True, data_quality_warning=True))
+
+    assert flagged.raw == pytest.approx(clean.raw)
+    assert flagged.multiplier == pytest.approx(0.5 * 0.7)
+    assert flagged.score == pytest.approx(clean.raw * 0.35)
+
+
+def test_detected_battle_carries_its_breakdown(detector):
+    """Every battle the detector emits explains its own score."""
+    battles = mature(detector)
+
+    assert battles
+    for battle in battles:
+        parts = battle.score_breakdown
+        assert parts is not None
+        assert parts.score == pytest.approx(battle.battle_score)
+        assert parts.gap + parts.closing + parts.pace == pytest.approx(parts.raw)
+
+
+# --------------------------------------------------------------------------
+# Ranking by what a battle is for
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("ahead,expected", [
+    (1, 7),    # 25 vs 18: the lead
+    (2, 3), (3, 3),
+    (4, 2), (8, 2),
+    (9, 1),
+    (10, 1),   # P11 passing P10 takes the last point
+    (11, 0), (19, 0),
+])
+def test_points_at_stake_is_what_a_swap_moves(ahead, expected):
+    from app.battle import points_at_stake
+
+    assert points_at_stake(ahead) == expected
+
+
+def test_equal_fights_are_ranked_by_position():
+    from app.battle import rank_score
+
+    assert rank_score(0.6, 5) > rank_score(0.6, 15)
+    assert rank_score(0.6, 15) == 0.6  # no points, no boost
+    assert rank_score(0.6, 1) == pytest.approx(1.2)  # the lead doubles it
+
+
+def test_a_hot_fight_at_the_back_can_still_beat_a_dull_one_in_the_points():
+    from app.battle import rank_score
+
+    assert rank_score(0.75, 15) > rank_score(0.56, 5)
+
+
+def test_battles_come_out_ranked_by_what_they_are_for():
+    """Two identical fights, one for P5 and one for P15: P5 goes first."""
+    from app.battle import BattleDetector
+
+    def car(number, position, gap):
+        return DriverState(
+            driver_number=number, full_name=str(number), team_name="T",
+            position=position, gap_to_ahead_s=gap,
+            # Both chasers half a second a lap quicker, so both fights are WATCH.
+            last_lap_time_s=89.5 if position in (6, 16) else 90.0,
+            updated_at=BASE_TIME, gap_updated_at=BASE_TIME,
+        )
+
+    detector = BattleDetector()
+    states = [car(n, p, 0.4 if p in (6, 16) else 2.9) for n, p in
+              [(n, n) for n in range(1, 21)]]
+    histories = {}
+    for i in range(6):
+        at = BASE_TIME + timedelta(seconds=4 * i)
+        snapshot = [
+            s.model_copy(update={
+                "gap_to_ahead_s": (0.9 - 0.08 * i) if s.position in (6, 16) else s.gap_to_ahead_s,
+                "updated_at": at, "gap_updated_at": at,
+            })
+            for s in states
+        ]
+        for s in snapshot:
+            histories.setdefault(s.driver_number, []).append(s)
+        battles = detector.detect(snapshot, histories, "green", now=at)
+
+    assert [b.chaser_position for b in battles] == [6, 16]
+    assert battles[0].battle_score == pytest.approx(battles[1].battle_score)
+    assert battles[0].points_at_stake == 2 and battles[1].points_at_stake == 0
+
