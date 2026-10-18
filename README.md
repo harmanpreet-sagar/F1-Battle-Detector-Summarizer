@@ -1,35 +1,44 @@
 # F1 Battle Detector
 
-Real-time Formula 1 battle detection and tracking system. A live race companion that identifies and ranks the most exciting on-track battles using OpenF1 API data.
+A Formula 1 race replay that finds the battles worth watching. Real 2025 races
+play back on a loop, and at every moment the dashboard ranks the hottest
+on-track battles, explains why each one scores the way it does, and draws a
+timeline of every battle in the race so far. Race data comes from
+[OpenF1](https://openf1.org), cached so the deployed demo never calls it.
 
 ![The replay broadcast during the 2025 British Grand Prix: running order, the top battle with its gap trend and score breakdown, and the battle timeline](docs/screenshots/replay-british-gp.png)
 
 ## Features
 
-- ⚡ Real-time battle detection between adjacent drivers
-- 🎯 Scoring on gap, closing rate and pace advantage, with a stability filter
-- 🚦 Safety car and pit stop awareness
-- 📊 Gap trend sparklines
+- 🏁 Race replay: six real 2025 Grands Prix at 5x on a loop, every viewer
+  watching the same moment
+- 🔥 Hottest battles now, scored on gap, closing rate and pace advantage, and
+  ranked higher when more points are at stake
+- 🧮 A breakdown of every score, so you can see why a battle ranks where it does
+- 📈 A battle timeline across the whole race, with gap trend sparklines
+- 🚦 Safety car, VSC and red flag awareness: no battles shown while the field is
+  neutralised
 - 📱 Mobile-first responsive design
-- 🔴 Live connection status indicator
-- 🧪 `DATA_MODE=mock` for developing without a live session
+- 📡 The same pipeline can run on OpenF1 live timing (`DATA_MODE=live`), or on a
+  scripted mock race for development (`DATA_MODE=mock`)
 
 ## Architecture
 
 **Backend**: Python + FastAPI
 
-- Polls OpenF1 API every 1-2 seconds for positions
-- Maintains in-memory driver state with rolling history
-- Detects and scores battles with context awareness
-- Exposes clean REST API
+- Replays cached races on the same 1.5 s grid a live poller would see
+- Maintains driver state with rolling history
+- Detects and scores battles with context awareness (track status, pit stops,
+  points at stake)
+- Exposes a REST API under `/api`
 
 **Frontend**: Next.js + React + TypeScript
 
-- Real-time dashboard with SWR auto-refresh
+- Dashboard refreshed every few seconds with SWR
 - Modern UI with TailwindCSS
-- Connection status monitoring
 
-**Data Source**: [OpenF1 API](https://openf1.org) (free, no auth required)
+**Data Source**: [OpenF1 API](https://openf1.org). Historical races are free and
+are cached into the repo; live timing needs a paid Sponsor-tier token.
 
 ## Prerequisites
 
@@ -334,12 +343,12 @@ so `DATA_MODE=mock uvicorn app.main:app` overrides the file.
 
 ## Development Status
 
-Working end to end. The backend polls OpenF1, detects and scores battles, and
-serves them over REST; the frontend renders them live.
+Working end to end. The backend replays cached races, detects and scores
+battles, and serves them over REST; the frontend shows the broadcast.
 
 - ✅ Battle detection and scoring
 - ✅ OpenF1 polling loops (positions, intervals, laps, session)
-- ✅ Frontend dashboard with live refresh
+- ✅ Frontend dashboard
 - ✅ Docker setup and CI
 - ✅ Race ingest and cache (`python -m app.ingest`)
 - ✅ Replay timeline builder

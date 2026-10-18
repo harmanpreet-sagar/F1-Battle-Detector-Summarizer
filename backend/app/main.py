@@ -162,7 +162,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="F1 Battle Detector API",
-    description="Real-time F1 battle detection and tracking",
+    description="F1 race replay that ranks the hottest on-track battles",
     version="0.1.0",
     lifespan=lifespan,
     # Everything the backend serves lives under /api, docs included, so that
