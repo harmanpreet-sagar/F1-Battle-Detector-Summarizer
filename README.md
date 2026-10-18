@@ -357,7 +357,7 @@ battles, and serves them over REST; the frontend shows the broadcast.
 - ✅ Replay UI: header, race clock, track status banner, tyres and team colours
 - ✅ Deployment packaging: replay on Vercel, one-image Docker (1.7)
 - ✅ Replay tests, including every shipped race checked for battles under a safety car (1.8)
-- 🟡 Verified on a preview deployment (1.9); production check after merge
+- ✅ Verified on a preview deployment (1.9); production check after merge
 - ✅ 322 backend tests
 
 Known limits:
