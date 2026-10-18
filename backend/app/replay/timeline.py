@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 from statistics import median
 from typing import ClassVar, Dict, List, Optional, Sequence, Set, Tuple
 import logging
+import re
 
 from app.config import config
 from app.replay.store import SessionArchive
@@ -155,6 +156,24 @@ def track_status_from(row: Dict) -> Optional[TrackStatus]:
     if flag == "RED":
         return "red"
 
+    # The pit exit light is green whenever the pit lane opens, including as
+    # the field leaves the pits behind a safety car, so it says nothing about
+    # the track. Read as a track green it ended the 2025 Belgian GP's safety
+    # car start before it began.
+    if "PIT EXIT" in message:
+        return None
+
+    # A start behind the safety car is announced under "Other", not
+    # SafetyCar: "FORMATION LAP WILL BE STARTED BEHIND THE SAFETY CAR", "RACE
+    # WILL START BEHIND THE SAFETY CAR". A standing start after it releases
+    # the track at lights out. "ROLLING START" means the car comes in at the
+    # end of the current lap, which needs the laps to place - see
+    # _track_status_events.
+    if re.search(r"\bSTART(ED)? BEHIND THE SAFETY CAR", message):
+        return "sc"
+    if message.strip() == "STANDING START":
+        return "green"
+
     # Only race control's SafetyCar category deploys one. The phrase turns up
     # in steward notices too - "INCIDENT ... NOTED - SAFETY CAR INFRINGEMENT" -
     # and matching on it froze the 2025 Bahrain GP under a safety car for its
@@ -263,7 +282,7 @@ def build_timeline(
 
     start = _race_start(archive, lap_events, events)
     status_events, initial_status = _track_status_events(
-        archive.rows("race_control"), start
+        archive.rows("race_control"), start, lap_events
     )
     events += status_events
 
@@ -462,7 +481,8 @@ def _pit_events(rows: Sequence[Dict]) -> List[PitEvent]:
 
 
 def _track_status_events(
-    rows: Sequence[Dict], start: datetime
+    rows: Sequence[Dict], start: datetime,
+    lap_events: Sequence[LapCompletedEvent] = (),
 ) -> Tuple[List[TrackStatusEvent], TrackStatus]:
     """
     Race control messages, reduced to the moments the track status changed.
@@ -476,11 +496,20 @@ def _track_status_events(
     ordered = []
     for row in rows:
         at = parse_openf1_timestamp(row.get("date"))
-        status = track_status_from(row)
-        if at is None or status is None:
+        if at is None:
             continue
-        ordered.append((at, status, (row.get("scope") or "Track").strip(),
-                        row.get("message") or ""))
+        message = row.get("message") or ""
+        if message.strip().upper() == "ROLLING START":
+            # Race control sends nothing when the racing starts. It starts
+            # when the leader completes the lap this was announced on.
+            released = _end_of_lap(lap_events, at, row.get("lap_number"))
+            if released is not None:
+                ordered.append((released, "green", "Track", message))
+            continue
+        status = track_status_from(row)
+        if status is None:
+            continue
+        ordered.append((at, status, (row.get("scope") or "Track").strip(), message))
     ordered.sort(key=lambda item: item[0])
 
     initial: TrackStatus = "green"
@@ -500,6 +529,17 @@ def _track_status_events(
             current = resolved
 
     return events, initial
+
+
+def _end_of_lap(
+    lap_events: Sequence[LapCompletedEvent], after: datetime, lap_number: Optional[int]
+) -> Optional[datetime]:
+    """When the leader next completes `lap_number` (any lap, if unknown) after `after`."""
+    return min(
+        (event.at for event in lap_events
+         if event.at > after and (lap_number is None or event.lap_number >= lap_number)),
+        default=None,
+    )
 
 
 def _race_start(

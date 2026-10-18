@@ -23,7 +23,7 @@ from app.sources.base import DataSource
 from app.state import parse_openf1_timestamp
 from tests import race_rows
 from tests.race_rows import LAP_S, at
-from tests.replay_fixtures import excerpt_replay, excerpt_store
+from tests.replay_fixtures import excerpt_replay, excerpt_store, excerpt_with_safety_car
 
 
 def by_driver(rows):
@@ -182,26 +182,10 @@ def test_a_reset_tick_clears_what_came_before():
 # Track status (B4)
 # --------------------------------------------------------------------------
 
-def _excerpt_with_safety_car(tmp_path, deployed, ended):
-    """The real excerpt, with a safety car period written into race control."""
-    archive = excerpt_store().load(9928)
-    rows = {endpoint: list(archive.rows(endpoint)) for endpoint in archive.manifest.endpoints}
-    rows["race_control"] += [
-        {"date": deployed.isoformat(), "category": "SafetyCar", "flag": None,
-         "scope": "Track", "message": "SAFETY CAR DEPLOYED"},
-        {"date": ended.isoformat(), "category": "Flag", "flag": "GREEN",
-         "scope": "Track", "message": "TRACK CLEAR"},
-    ]
-    archive.manifest.endpoints = {}
-    store = SessionStore(tmp_path)
-    store.save(archive.manifest, rows)
-    return RaceReplay(store.load(9928))
-
-
 def test_no_battle_is_shown_under_a_safety_car_and_they_come_back_after(tmp_path):
     base = excerpt_replay()
     deployed, ended = base.tick_time(150), base.tick_time(250)
-    replay = _excerpt_with_safety_car(tmp_path, deployed, ended)
+    replay = excerpt_with_safety_car(tmp_path, deployed, ended)
 
     pipeline = RacePipeline(ReplayClock(replay.start))
     before = during = after = 0

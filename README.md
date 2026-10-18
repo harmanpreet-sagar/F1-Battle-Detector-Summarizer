@@ -345,8 +345,9 @@ serves them over REST; the frontend renders them live.
 - ✅ `/api` routes, replay status and cached-race endpoints
 - ✅ Replay UI: header, race clock, track status banner, tyres and team colours
 - ✅ Deployment packaging: replay on Vercel, one-image Docker (1.7)
-- ⬜ Verify on a preview deployment, then 1.8 tests - next
-- ✅ 311 backend tests
+- ✅ Replay tests, including every shipped race checked for battles under a safety car (1.8)
+- ⬜ Verify on a preview deployment (1.9) - next
+- ✅ 321 backend tests
 
 Known limits:
 

@@ -400,6 +400,22 @@ Two projects from this one repo, as `docs/DEPLOY-VERCEL.md` describes: `backend/
 - **Stateless equivalence:** a pipeline rebuilt from the last `REPLAY_WINDOW_TICKS` ticks at race time t reports the same battles as one that has run continuously from the race start to t — the replay sibling of `tests/test_demo.py`. Where it can't match exactly (a battle older than the window), assert the difference is bounded and write down what it is.
 - API: `/api/replay/status` shape; on the container path, static files served at `/` with `/api/*` still winning over static.
 
+**Built** — most of this list was written alongside 1.1–1.7, so 1.8 was an audit against it, which found three gaps and one bug.
+
+- **Already covered:** timeline ordering, lap completion, nulls, red-flag compression and retirement (`test_timeline.py`); tick = latest row per driver and seek = play (`test_replay.py`); live equivalence; schedule wrapping; stateless equivalence, whose one permitted difference is `duration_updates` (the rebuild counts only gap samples inside its window, so it can only count fewer); the API and container-path tests (`test_api.py`).
+- **The excerpt** is 8 laps rather than ~10, with a pit stop and 20+ position changes but no safety car (Hungary had none). The safety car tests write one into it.
+- **Gaps closed:**
+  - **Every shipped race, every tick, through the detector:** no HOT or WATCH battle while `sc`/`vsc`/`red`, and battles come back after restarts. It takes ~17s, the slowest test in the suite, but it runs on what actually ships.
+  - **Stateless equivalence through a safety car:** the rebuild now matches a continuous run across a restart, not only in green running.
+  - **The exact playlist boundary:** the boundary instant is the next race's tick 0.
+- **Bug found: the Belgian GP's safety car start was shown as racing.** It ran four laps behind the safety car, then had a rolling start, and race control has no `SafetyCar` message for any of it. "RACE WILL START BEHIND THE SAFETY CAR" is filed under `Other`, and the "GREEN LIGHT - PIT EXIT OPEN" that followed read as a track green. The replay showed WATCH and HOT battles in a safety car queue. The fix:
+  - Start-behind-the-safety-car messages now deploy it.
+  - "STANDING START" releases it.
+  - "ROLLING START" releases it when the leader completes that lap.
+  - The pit exit light no longer counts as a track status.
+
+  The five other races are unchanged. The test that checks battles under a safety car can't catch a safety car the mapping misses, since those laps read as green, so a separate test pins Belgium's start. Its green comes as lap 5 begins.
+
 ### 1.9 Where the platform-shaped work gets proved
 
 All the work happens in GitHub with the normal PR workflow — there's no second workspace. What varies is *where you find out whether something works*.

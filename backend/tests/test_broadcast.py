@@ -21,7 +21,7 @@ from app.replay.engine import RaceReplay
 from app.replay.store import SessionStore
 from tests import race_rows
 from tests.race_rows import at
-from tests.replay_fixtures import excerpt_replay
+from tests.replay_fixtures import excerpt_replay, excerpt_with_safety_car
 
 
 def synthetic(tmp_path, session_key, rows=None):
@@ -67,6 +67,10 @@ def test_the_playlist_moves_on_and_wraps(tmp_path):
         return position.cycle, position.session_key
 
     assert where(one - 1) == (0, 1)
+    # Exactly on a boundary is the start of the next race, not the end of this one.
+    assert where(one) == (0, 2)
+    assert broadcast.locate(broadcast.epoch + timedelta(seconds=one)).tick == 0
+    assert where(one + two) == (1, 1)
     assert where(one + 1) == (0, 2)
     assert where(one + two - 1) == (0, 2)
     assert where(one + two + 1) == (1, 1)
@@ -184,24 +188,24 @@ def test_the_window_holds_a_full_history():
     assert len(pipeline.history(1)) == config.HISTORY_MAX_LEN
 
 
-def test_a_rebuilt_pipeline_matches_one_that_ran_from_lights_out():
+def compare_rebuilds(broadcast, every=10):
     """
-    The equivalence the serverless path depends on, at every 10th tick of the
-    excerpt. The single permitted difference is `duration_updates`, which
-    counts distinct gap samples inside the window rather than since the
-    battle began - so the rebuild can only ever count fewer.
+    Rebuild at every `every`th tick and compare with a pipeline that has run
+    continuously since lights out. The single permitted difference is
+    `duration_updates`, which counts distinct gap samples inside the window
+    rather than since the battle began - so the rebuild can only ever count
+    fewer. Returns how many ticks were compared, and which of them had battles.
     """
-    broadcast = excerpt_broadcast()
     replay = broadcast.replay(0)
     continuous = RacePipeline(ReplayClock(replay.start))
     cursor = replay.cursor()
 
-    compared = with_battles = 0
+    compared, with_battles = 0, []
     for tick in range(replay.tick_count):
         continuous.clock.set(replay.tick_time(tick))
         continuous.ingest(cursor.tick(tick, reset=(tick == 0)))
         continuous.detect()
-        if tick % 10:
+        if tick % every:
             continue
 
         rebuilt = broadcast.build_pipeline(moment_of(broadcast, tick))
@@ -212,10 +216,33 @@ def test_a_rebuilt_pipeline_matches_one_that_ran_from_lights_out():
             [b.model_dump(exclude={"duration_updates"}) for b in theirs], f"tick {tick}"
         assert all(a.duration_updates <= b.duration_updates for a, b in zip(ours, theirs))
         compared += 1
-        with_battles += bool(ours)
+        if ours:
+            with_battles.append(tick)
+
+    return compared, with_battles
+
+
+def test_a_rebuilt_pipeline_matches_one_that_ran_from_lights_out():
+    """The equivalence the serverless path depends on, across the excerpt."""
+    compared, with_battles = compare_rebuilds(excerpt_broadcast())
 
     assert compared > 20
-    assert with_battles >= 5, "the comparison is vacuous without battles in it"
+    assert len(with_battles) >= 5, "the comparison is vacuous without battles in it"
+
+
+def test_a_rebuilt_pipeline_matches_through_a_safety_car(tmp_path):
+    """
+    A restart is where a window could go wrong: the battles that come back
+    are rebuilt from a window that is partly neutralised.
+    """
+    base = excerpt_replay()
+    replay = excerpt_with_safety_car(tmp_path, base.tick_time(150), base.tick_time(250))
+    broadcast = Broadcast([replay], speed=1, epoch=replay.start)
+
+    compared, with_battles = compare_rebuilds(broadcast)
+
+    assert compared > 20
+    assert any(tick > 250 for tick in with_battles), "nothing compared after the restart"
 
 
 def test_everyone_watching_sees_the_same_race():
@@ -430,6 +457,57 @@ def test_every_shipped_race_is_replayable():
             if replay.track_status_at(a) in ("sc", "vsc", "red")
         )
         assert neutral < 0.5 * replay.timeline.duration.total_seconds(), manifest.session_key
+
+
+def test_no_shipped_race_shows_a_battle_under_a_neutralised_track():
+    """
+    The Phase 1 acceptance check, on the races that ship rather than on a
+    safety car written into a fixture: every tick of every race through the
+    detector. The slowest test in the suite (~15s).
+
+    It can only check the periods race control's messages were read as
+    neutralised. A safety car the mapping misses reads as green and passes
+    here, which is what the Belgian GP test below is for.
+    """
+    restarts = recovered = 0
+    for manifest in SessionStore().manifests():
+        replay = RaceReplay(SessionStore().load(manifest.session_key))
+        pipeline = RacePipeline(ReplayClock(replay.start))
+        restarted_at = None
+        neutralised = False
+        for moment, tick in replay.ticks():
+            pipeline.clock.set(moment)
+            pipeline.ingest(tick)
+            shown = [b for b in pipeline.detect() if b.intensity in ("HOT", "WATCH")]
+            if tick.track_status in ("sc", "vsc", "red"):
+                assert not shown, f"{manifest.meeting_name} at {moment}: {shown[0].battle_id}"
+                neutralised, restarted_at = True, None
+                continue
+            if neutralised:
+                neutralised, restarted_at = False, moment
+                restarts += 1
+            if restarted_at and shown and moment - restarted_at < timedelta(minutes=5):
+                recovered += 1
+                restarted_at = None
+
+    assert restarts >= 5, "the shipped races should include safety cars"
+    # A restart a lap or two from the flag may never get going again.
+    assert recovered >= restarts - 2, f"battles came back after {recovered} of {restarts} restarts"
+
+
+def test_the_belgian_gp_starts_behind_the_safety_car():
+    """
+    The 2025 Belgian GP ran its first four laps behind the safety car and
+    then had a rolling start. Race control has no SafetyCar message for any
+    of it, and those laps were once shown as racing, battles and all.
+    """
+    replay = RaceReplay(SessionStore().load(9939))
+    statuses = [e for e in replay.timeline.events if e.kind == "track_status"]
+
+    assert statuses[0].status == "sc"
+    released = statuses[1]
+    assert released.status == "green"
+    assert replay.lap_at(released.at) == 5
 
 
 def test_the_shipped_playlist_loops():

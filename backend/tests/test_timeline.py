@@ -264,6 +264,14 @@ def test_a_gap_row_with_no_timestamp_is_dropped(tmp_path):
     # Rows without a category still deploy on the usual wording
     ({"message": "SAFETY CAR DEPLOYED"}, "sc"),
     ({"message": "VIRTUAL SAFETY CAR DEPLOYED"}, "vsc"),
+    # The pit exit light is not the track
+    ({"category": "Flag", "flag": "GREEN", "scope": "Track",
+      "message": "GREEN LIGHT - PIT EXIT OPEN"}, None),
+    # A start behind the safety car is filed under Other
+    ({"category": "Other", "message": "RACE WILL START BEHIND THE SAFETY CAR"}, "sc"),
+    ({"category": "Other",
+      "message": "FORMATION LAP WILL BE STARTED BEHIND THE SAFETY CAR"}, "sc"),
+    ({"category": "Other", "message": "STANDING START"}, "green"),
 ])
 def test_race_control_messages_map_to_a_track_status(row, expected):
     assert track_status_from(row) == expected
@@ -329,6 +337,58 @@ def test_a_race_starting_under_a_safety_car_knows_it(tmp_path):
 
     assert timeline.initial_track_status == "sc"
     assert timeline.events[0].status == "sc"
+
+
+def test_a_rolling_start_releases_the_field_when_the_leader_finishes_that_lap(tmp_path):
+    """
+    The 2025 Belgian GP's sequence. Race control announces the safety car
+    start and, a lap before the end of it, the rolling start - and then says
+    nothing when the racing begins, so the laps have to say when.
+    """
+    control = [
+        {"date": race_rows.iso(at(-300)), "category": "Other",
+         "message": "RACE WILL START BEHIND THE SAFETY CAR"},
+        {"date": race_rows.iso(at(-1)), "category": "Flag", "flag": "GREEN",
+         "scope": "Track", "message": "GREEN LIGHT - PIT EXIT OPEN"},
+        {"date": race_rows.iso(at(120)), "lap_number": 2, "category": "Other",
+         "message": "ROLLING START"},
+    ]
+
+    timeline = timeline_of(tmp_path, race_rows.endpoints(race_control=control))
+
+    assert [(e.at, e.status) for e in kinds(timeline, "track_status")] == [
+        (timeline.start, "sc"),
+        (at(2 * LAP_S), "green"),
+    ]
+
+
+def test_a_standing_start_after_a_safety_car_formation_lap_is_green(tmp_path):
+    """The 2025 British GP: formation lap behind the car, then a normal start."""
+    control = [
+        {"date": race_rows.iso(at(-400)), "category": "Other",
+         "message": "FORMATION LAP WILL BE STARTED BEHIND THE SAFETY CAR"},
+        {"date": race_rows.iso(at(-60)), "category": "Other", "message": "STANDING START"},
+    ]
+
+    timeline = timeline_of(tmp_path, race_rows.endpoints(race_control=control))
+
+    assert timeline.initial_track_status == "green"
+
+
+def test_the_pit_exit_opening_does_not_end_a_safety_car(tmp_path):
+    control = race_rows.race_control_rows()[:3] + [
+        {"date": race_rows.iso(at(150)), "category": "Flag", "flag": "GREEN",
+         "scope": "Track", "message": "GREEN LIGHT - PIT EXIT OPEN"},
+        {"date": race_rows.iso(at(260)), "category": "Flag", "flag": "CLEAR",
+         "scope": "Track", "message": "TRACK CLEAR"},
+    ]
+
+    timeline = timeline_of(tmp_path, race_rows.endpoints(race_control=control))
+
+    assert [(e.at, e.status) for e in kinds(timeline, "track_status")][-2:] == [
+        (at(100), "sc"),
+        (at(260), "green"),
+    ]
 
 
 def test_a_red_flag_holds_until_the_track_is_clear(tmp_path):

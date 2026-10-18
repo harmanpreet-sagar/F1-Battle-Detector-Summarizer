@@ -142,6 +142,12 @@ the broadcast reaches it.
   mention the safety car ("... NOTED - SAFETY CAR INFRINGEMENT") were read as
   deployments, which froze the 2025 Bahrain GP under a safety car for its last
   27 minutes; only race control's `SafetyCar` category deploys one now.
+- **1.8: the Belgian GP's safety car start.** Its first four laps behind the
+  safety car were shown as racing, with battles, because race control announces
+  a safety car start and a rolling start under `Other` and never says when the
+  racing begins. Those messages are read now, and a rolling start ends when the
+  leader completes the lap. A test replays every shipped race through the
+  detector and fails on any battle shown under a neutralised track.
 
 ## If the build fails
 
