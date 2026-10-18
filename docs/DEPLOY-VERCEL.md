@@ -134,6 +134,12 @@ cost can be read off a deployment directly:
 curl -sI https://<backend-url>/api/battles/top | grep -i server-timing
 ```
 
+Read that way on the next preview (11 warm requests): the app spends **70-81
+ms** per `/api/battles/top`, against ~30 ms locally, while the request as a
+whole took 250-750 ms. The rebuild is a fifth to a third of what a viewer
+waits; the rest is Vercel. A cold sample is still to take - the first
+request to that deployment came from somewhere else.
+
 Measured locally on Windows:
 
 | | |
