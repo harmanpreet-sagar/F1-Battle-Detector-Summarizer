@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, Optional
 import asyncio
 import logging
+import time
 
 from app import demo
 from app.clock import ReplayClock, WallClock, utcnow
@@ -194,6 +195,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_served_first_request = False
+
+
+@app.middleware("http")
+async def server_timing(request, call_next):
+    """
+    The app's own time on each request, as a Server-Timing header. From the
+    outside a request on Vercel is mostly network and routing; this is the
+    part the stateless rebuild costs. The first request on an instance is
+    marked, since that is where a cold start's indexing lands.
+    """
+    global _served_first_request
+    first = not _served_first_request
+    _served_first_request = True
+    start = time.perf_counter()
+    response = await call_next(request)
+    timing = f"app;dur={(time.perf_counter() - start) * 1000:.1f}"
+    response.headers["Server-Timing"] = timing + (', first;desc="first request on this instance"' if first else "")
+    return response
 
 
 @api.get("")

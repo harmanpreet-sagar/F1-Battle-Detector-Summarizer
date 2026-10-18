@@ -117,8 +117,24 @@ stuck under a safety car.
 
 ## Measurements
 
-Measured locally on Windows. Re-measure on a preview deployment, where cold
-starts are the thing that matters.
+On the PR #14 preview (function in `iad1`, measured from Toronto through the
+`yul1` edge, 20 requests):
+
+| | |
+| --- | --- |
+| Warm `/api/battles/top` | 151 ms median, 131-238 ms, after a 72 ms TLS handshake |
+| A trivial route through the same function | ~145 ms - so nearly all of a warm request is network and routing, not the rebuild |
+| A request landing on a new instance | ~1.8 s, one in the first eight |
+
+Every response carries a `Server-Timing: app;dur=…` header with the app's own
+time, and the first request on each instance adds `first`, so the server-side
+cost can be read off a deployment directly:
+
+```bash
+curl -sI https://<backend-url>/api/battles/top | grep -i server-timing
+```
+
+Measured locally on Windows:
 
 | | |
 | --- | --- |

@@ -2,6 +2,8 @@
 
 Real-time Formula 1 battle detection and tracking system. A live race companion that identifies and ranks the most exciting on-track battles using OpenF1 API data.
 
+![The replay broadcast during the 2025 British Grand Prix: running order, the top battle with its gap trend and score breakdown, and the battle timeline](docs/screenshots/replay-british-gp.png)
+
 ## Features
 
 - ⚡ Real-time battle detection between adjacent drivers
@@ -346,8 +348,8 @@ serves them over REST; the frontend renders them live.
 - ✅ Replay UI: header, race clock, track status banner, tyres and team colours
 - ✅ Deployment packaging: replay on Vercel, one-image Docker (1.7)
 - ✅ Replay tests, including every shipped race checked for battles under a safety car (1.8)
-- ⬜ Verify on a preview deployment (1.9) - next
-- ✅ 321 backend tests
+- 🟡 Verified on a preview deployment (1.9); production check after merge
+- ✅ 322 backend tests
 
 Known limits:
 

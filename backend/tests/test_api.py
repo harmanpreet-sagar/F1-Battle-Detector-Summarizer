@@ -195,6 +195,15 @@ def test_health_reports_the_mode(monkeypatch):
     assert health["replay"] is None
 
 
+def test_every_response_says_how_long_the_app_took():
+    client, _, _ = fresh_client()
+
+    timing = client.get("/api/health").headers["Server-Timing"]
+
+    assert timing.startswith("app;dur=")
+    assert float(timing.split(";dur=")[1].split(",")[0]) >= 0
+
+
 # --------------------------------------------------------------------------
 # The container path: the exported frontend at /, the API still at /api (1.7)
 # --------------------------------------------------------------------------

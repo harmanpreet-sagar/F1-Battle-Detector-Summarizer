@@ -387,7 +387,7 @@ Two projects from this one repo, as `docs/DEPLOY-VERCEL.md` describes: `backend/
   - **The bundle** is ~25 MB (deps ~20 MB) against the 250 MB limit.
   - If the cold start matters on a preview deployment, the fix is to store each race's start, end and stoppages in its manifest at ingest and build a race's timeline only when the broadcast reaches it.
 - **The Docker image is built and verified** (264 MB). `/` serves the dashboard, `/api/docs` and `/api/health` answer from the same port, an unknown path returns 404, and the container indexes all six races in ~1.3s at startup before joining the broadcast. Its quiet periods are all after the chequered flag, where the feed thins out during the cool-down lap. Each race keeps 3-12 minutes of post-race data, so ending races at the flag is a small polish for later.
-- **Not yet verified on Vercel.** That needs a push and a preview deployment (1.9).
+- **Verified on Vercel** in 1.9, on the PR #14 preview.
 
 ### 1.8 Tests (network-free, CI stays green on race weekends)
 
@@ -431,6 +431,24 @@ All the work happens in GitHub with the normal PR workflow — there's no second
 - Open the replay PR early enough that its preview deployment surfaces packaging problems while there's still time to design around them, rather than at the end.
 - Keep `docs/DEPLOY-VERCEL.md` current as the deployment log: what broke (bundle size, cold starts, build, env vars), how each was solved. Future-you will need it the next time the free tier shifts.
 - Take 3–4 screenshots and a 30–60s screen recording (GIF or video) of the replay. These go in the README and keep the project presentable wherever the link is read (see §10).
+
+**Verified on the PR #14 preview:**
+
+- **The backend preview serves the replay** at `/api/*`, with `mode: replay` and all six races indexed.
+- **The frontend preview reads from it across origins**, so the CORS regex holds.
+- **Warm requests take ~150 ms from Toronto**, almost all of it network and routing. A trivial route through the same function costs about the same as the per-request rebuild.
+- **One request in the first eight landed on a new instance**, at ~1.8 s.
+- **Responses now carry `Server-Timing`**, so the server-side cost can be read off a deployment instead of inferred.
+- **Three things went wrong in deployment, all settings, none in the code:**
+  - The backend preview was behind Vercel Authentication.
+  - The frontend's `NEXT_PUBLIC_API_BASE_URL` pointed at the wrong deployment.
+  - The production backend still serves `main`'s pre-`/api` code until the PR merges.
+
+**Still to do:**
+
+- **Read the cold start off `Server-Timing`** on a fresh deployment, whose first request is cold by construction.
+- **Take more screenshots and the screen recording.** One desktop screenshot is in the README, taken from the local frontend against the preview backend: the frontend preview is behind Vercel's login, and headless Chrome can't render below 504px, so a phone shot needs a real device.
+- **Check the production URL in a private window after the merge**, and again once the function has gone cold.
 
 ### 1.10 Minimum shippable cut (if time runs short before publishing)
 
