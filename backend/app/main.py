@@ -283,7 +283,7 @@ async def get_replay_sessions():
     """Every cached race, from its manifest, oldest first."""
     playlist = set()
     if config.DATA_MODE == "replay":
-        playlist = {slot.replay.session_key for slot in get_broadcast().slots}
+        playlist = {slot.session_key for slot in get_broadcast().slots}
     return {
         "sessions": [
             {

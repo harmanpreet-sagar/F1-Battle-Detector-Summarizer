@@ -207,6 +207,7 @@ cd backend
 python -m app.ingest --year 2025 --round 14     # Nth race of the season by date
 python -m app.ingest --session-key 9693         # or by OpenF1 session key
 python -m app.ingest --list                     # what is already cached
+python -m app.ingest --refresh-playback         # re-store schedules, offline
 ```
 
 Each run prints rows and compressed size per endpoint, which is what decides

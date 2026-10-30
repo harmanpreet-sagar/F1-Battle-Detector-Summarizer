@@ -137,8 +137,20 @@ curl -sI https://<backend-url>/api/battles/top | grep -i server-timing
 Read that way on the next preview (11 warm requests): the app spends **70-81
 ms** per `/api/battles/top`, against ~30 ms locally, while the request as a
 whole took 250-750 ms. The rebuild is a fifth to a third of what a viewer
-waits; the rest is Vercel. A cold sample is still to take - the first
-request to that deployment came from somewhere else.
+waits; the rest is Vercel.
+
+On production, 30 Oct (two redeploys, the first request to each read from
+Toronto, then five warm ones):
+
+| | App (`app;dur`) | Request (ttfb) |
+| --- | --- | --- |
+| Cold | 1,663 / 1,877 ms | 3.55 / 2.24 s |
+| Warm | 60-79 ms | 0.22-0.40 s |
+
+A cold start costs a viewer 2-3.5 s. Indexing the six races is ~1.8 s of it, the
+part this app controls; the rest is Python start-up, which Vercel sometimes
+does before the request arrives. Neither cold request carried the `first`
+label, so something reaches each new instance before the first viewer does.
 
 Measured locally on Windows:
 
@@ -150,10 +162,12 @@ Measured locally on Windows:
 | Warm request | ~30 ms (rebuild of 108 ticks) |
 
 The function is roughly 25 MB against Vercel's 250 MB limit, so bundle size is
-not a constraint. If the cold start shows up on a preview deployment, the
-first-request indexing is the part to cut: store each race's start, end and
-stoppages in its manifest at ingest, and build a race's full timeline only when
-the broadcast reaches it.
+not a constraint.
+
+Since 30 Oct, ingest stores each race's start, end and stoppages in its
+manifest, and the broadcast builds a race only when it reaches it. A cold
+instance indexes one race instead of six: 1.8 s down to ~0.4 s locally
+(Linux, measured from import of the broadcast to its first rebuild).
 
 ## Deployment log
 

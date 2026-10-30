@@ -67,6 +67,13 @@
   "fetched_at": "2026-10-17T20:25:13.193923+00:00",
   "gmt_offset": "01:00:00",
   "meeting_name": "British Grand Prix",
+  "playback": {
+    "end": "2025-07-06T15:42:30.188000+00:00",
+    "quiet_gap_s": 60.0,
+    "quiet_periods": [],
+    "retirement_laps": 2,
+    "start": "2025-07-06T14:03:49.615000+00:00"
+  },
   "round": 12,
   "schema_version": 1,
   "session_key": 9947,

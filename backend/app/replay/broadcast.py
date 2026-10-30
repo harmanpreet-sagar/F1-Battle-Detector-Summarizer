@@ -27,7 +27,7 @@ seconds rather than as a frozen screen.
 from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Union
 import logging
 
 from app.clock import ReplayClock, ensure_utc
@@ -35,7 +35,8 @@ from app.config import config
 from app.models import SessionStatus
 from app.pipeline import RacePipeline
 from app.replay.engine import RaceReplay, play
-from app.replay.store import SessionStore
+from app.replay.store import Manifest, PlaybackSummary, SessionArchive, SessionStore
+from app.replay.timeline import playback_summary
 from app.state import parse_openf1_timestamp
 
 logger = logging.getLogger(__name__)
@@ -59,11 +60,12 @@ class Segment:
 
 
 def playback_segments(
-    replay: RaceReplay, speed: float, quiet_playback_s: float
+    race: Union[RaceReplay, PlaybackSummary], speed: float, quiet_playback_s: float
 ) -> List[Segment]:
     """Wall-to-race mapping for one race, with stoppages compressed."""
-    start = replay.start
-    race_total = replay.timeline.duration.total_seconds()
+    summary = race if isinstance(race, PlaybackSummary) else playback_summary(race.archive, race.timeline)
+    start = summary.start
+    race_total = (summary.end - summary.start).total_seconds()
 
     segments: List[Segment] = []
     wall = race = 0.0
@@ -74,7 +76,7 @@ def playback_segments(
         wall += wall_length
         race = race_end
 
-    for quiet_start, quiet_end in replay.timeline.quiet_periods():
+    for quiet_start, quiet_end in summary.quiet_periods:
         a = (quiet_start - start).total_seconds()
         b = (quiet_end - start).total_seconds()
         # Only worth compressing if it would otherwise take longer.
@@ -90,11 +92,29 @@ def playback_segments(
 
 
 class _Slot:
-    """One race's place in the playlist."""
+    """
+    One race's place in the playlist.
 
-    def __init__(self, replay: RaceReplay, speed: float, quiet_playback_s: float):
-        self.replay = replay
-        self.segments = playback_segments(replay, speed, quiet_playback_s)
+    The schedule needs only the race's playback summary. Given an archive
+    whose manifest stores one, the race is built the first time the broadcast
+    reaches it, so a cold instance pays for the race on air, not the playlist.
+    """
+
+    def __init__(
+        self,
+        race: Union[RaceReplay, SessionArchive],
+        speed: float,
+        quiet_playback_s: float,
+    ):
+        if isinstance(race, RaceReplay):
+            self._replay: Optional[RaceReplay] = race
+            self.archive = race.archive
+            summary = playback_summary(race.archive, race.timeline)
+        else:
+            self._replay = None
+            self.archive = race
+            summary = race.manifest.playback
+        self.segments = playback_segments(summary, speed, quiet_playback_s)
         self._wall_ends = [segment.wall_end for segment in self.segments]
         self.wall_duration = self.segments[-1].wall_end
 
@@ -102,6 +122,20 @@ class _Slot:
         index = min(bisect_right(self._wall_ends, wall_s), len(self.segments) - 1)
         segment = self.segments[index]
         return segment.race_at(wall_s), segment.quiet
+
+    @property
+    def session_key(self) -> int:
+        return self.archive.session_key
+
+    @property
+    def loaded(self) -> bool:
+        return self._replay is not None
+
+    @property
+    def replay(self) -> RaceReplay:
+        if self._replay is None:
+            self._replay = RaceReplay(self.archive)
+        return self._replay
 
 
 @dataclass(frozen=True)
@@ -126,13 +160,13 @@ class Broadcast:
 
     def __init__(
         self,
-        replays: Sequence[RaceReplay],
+        races: Sequence[Union[RaceReplay, SessionArchive]],
         speed: Optional[float] = None,
         epoch: Optional[datetime] = None,
         quiet_playback_s: Optional[float] = None,
         window_ticks: Optional[int] = None,
     ):
-        if not replays:
+        if not races:
             raise ValueError("a broadcast needs at least one cached race")
         self.speed = speed or config.REPLAY_SPEED
         if self.speed <= 0:
@@ -141,7 +175,7 @@ class Broadcast:
         self.window_ticks = window_ticks or config.REPLAY_WINDOW_TICKS
         quiet = config.REPLAY_QUIET_PLAYBACK_S if quiet_playback_s is None else quiet_playback_s
 
-        self.slots = [_Slot(replay, self.speed, quiet) for replay in replays]
+        self.slots = [_Slot(race, self.speed, quiet) for race in races]
         self._slot_ends: List[float] = []
         total = 0.0
         for slot in self.slots:
@@ -164,11 +198,11 @@ class Broadcast:
                 f"no cached races under {store.root}; "
                 "run `python -m app.ingest --year 2025 --round 14` first"
             )
-        replays = [RaceReplay(store.load(key)) for key in keys]
-        broadcast = cls(replays, **kwargs)
+        races = [_schedulable(store.load(key)) for key in keys]
+        broadcast = cls(races, **kwargs)
         logger.info(
             "Replay broadcast: %d race(s) %s at %gx, %.0f minutes a loop",
-            len(replays), keys, broadcast.speed, broadcast.duration_s / 60,
+            len(races), keys, broadcast.speed, broadcast.duration_s / 60,
         )
         return broadcast
 
@@ -199,8 +233,9 @@ class Broadcast:
     def replay(self, index: int) -> RaceReplay:
         return self.slots[index].replay
 
-    def next_race(self, position: BroadcastPosition) -> RaceReplay:
-        return self.slots[(position.index + 1) % len(self.slots)].replay
+    def next_race(self, position: BroadcastPosition) -> Manifest:
+        """The next race's manifest. Naming it must not build it."""
+        return self.slots[(position.index + 1) % len(self.slots)].archive.manifest
 
     # -- the stateless rebuild (1.4) --------------------------------------
 
@@ -236,7 +271,7 @@ class Broadcast:
         position = self.locate(now)
         replay = self.replay(position.index)
         manifest = replay.archive.manifest
-        race = race_summary(replay)
+        race = race_summary(manifest)
         return SessionStatus(
             session_key=replay.session_key,
             session_name=manifest.session_name or "Race",
@@ -258,7 +293,7 @@ class Broadcast:
         position = self.locate(now)
         replay = self.replay(position.index)
         return {
-            **race_summary(replay),
+            **race_summary(replay.archive.manifest),
             "race_time": position.race_time.isoformat(),
             # Since lights out, which is what the header's race clock shows.
             "elapsed_s": round((position.race_time - replay.start).total_seconds(), 1),
@@ -272,16 +307,31 @@ class Broadcast:
         }
 
 
-def race_summary(replay: RaceReplay) -> Dict:
+def race_summary(manifest: Manifest) -> Dict:
     """A race's identity, as the API names it."""
-    manifest = replay.archive.manifest
     circuit = manifest.circuit or "Unknown"
     return {
-        "session_key": replay.session_key,
+        "session_key": manifest.session_key,
         "meeting_name": manifest.meeting_name or f"{manifest.year or ''} {circuit}".strip(),
         "circuit": circuit,
         "year": manifest.year,
     }
+
+
+def _schedulable(archive: SessionArchive) -> Union[RaceReplay, SessionArchive]:
+    """
+    The archive itself when its manifest says where the race starts, ends and
+    stops under the current settings; otherwise the race, built now to find out.
+    """
+    summary = archive.manifest.playback
+    if summary and summary.applies(config.REPLAY_QUIET_GAP_S, config.REPLAY_RETIREMENT_LAPS):
+        return archive
+    logger.warning(
+        "Race %s has no playback summary for these settings, so it is indexed now. "
+        "`python -m app.ingest --refresh-playback` stores one.",
+        archive.session_key,
+    )
+    return RaceReplay(archive)
 
 
 _broadcast: Optional[Broadcast] = None
@@ -291,8 +341,9 @@ def get_broadcast() -> Broadcast:
     """
     The configured broadcast, built once per process.
 
-    Building reads and indexes every race in the playlist (~150 ms each), so
-    a warm serverless instance must not repeat it per request.
+    Building reads every manifest; each race is indexed (~300 ms) the first
+    time the broadcast reaches it and then kept, so a warm serverless instance
+    repeats neither per request.
     """
     global _broadcast
     if _broadcast is None:
