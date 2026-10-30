@@ -13,7 +13,7 @@ what make re-running ingest a no-op instead of a second round of requests.
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional
+from typing import Dict, Iterator, List, Optional, Tuple
 import gzip
 import hashlib
 import json
@@ -91,6 +91,48 @@ class EndpointRecord:
 
 
 @dataclass
+class PlaybackSummary:
+    """
+    What the broadcast schedule needs from a race: when it starts, when it
+    ends and where the feed goes quiet (red flags).
+
+    Ingest stores it so a cold instance can lay out the whole playlist from
+    manifests and index only the race on air. It depends on two settings,
+    kept alongside so a reader can tell when it no longer applies.
+    """
+    start: datetime
+    end: datetime
+    quiet_periods: List[Tuple[datetime, datetime]]
+    quiet_gap_s: float
+    retirement_laps: int
+
+    def applies(self, quiet_gap_s: float, retirement_laps: int) -> bool:
+        return self.quiet_gap_s == quiet_gap_s and self.retirement_laps == retirement_laps
+
+    def to_json(self) -> Dict:
+        return {
+            "start": self.start.isoformat(),
+            "end": self.end.isoformat(),
+            "quiet_periods": [[a.isoformat(), b.isoformat()] for a, b in self.quiet_periods],
+            "quiet_gap_s": self.quiet_gap_s,
+            "retirement_laps": self.retirement_laps,
+        }
+
+    @classmethod
+    def from_json(cls, data: Dict) -> "PlaybackSummary":
+        return cls(
+            start=parse_openf1_timestamp(data["start"]),
+            end=parse_openf1_timestamp(data["end"]),
+            quiet_periods=[
+                (parse_openf1_timestamp(a), parse_openf1_timestamp(b))
+                for a, b in data.get("quiet_periods", [])
+            ],
+            quiet_gap_s=float(data["quiet_gap_s"]),
+            retirement_laps=int(data["retirement_laps"]),
+        )
+
+
+@dataclass
 class Manifest:
     """The identity and provenance of one cached session."""
     session_key: int
@@ -105,6 +147,7 @@ class Manifest:
     fetched_at: Optional[datetime] = None
     schema_version: int = SCHEMA_VERSION
     endpoints: Dict[str, EndpointRecord] = field(default_factory=dict)
+    playback: Optional[PlaybackSummary] = None
 
     @property
     def total_bytes(self) -> int:
@@ -135,6 +178,7 @@ class Manifest:
             "gmt_offset": self.gmt_offset,
             "fetched_at": self.fetched_at.isoformat() if self.fetched_at else None,
             "endpoints": {n: r.to_json() for n, r in self.endpoints.items()},
+            **({"playback": self.playback.to_json()} if self.playback else {}),
         }
 
     @classmethod
@@ -161,6 +205,9 @@ class Manifest:
                 name: EndpointRecord.from_json(record)
                 for name, record in (data.get("endpoints") or {}).items()
             },
+            playback=(
+                PlaybackSummary.from_json(data["playback"]) if data.get("playback") else None
+            ),
         )
 
 

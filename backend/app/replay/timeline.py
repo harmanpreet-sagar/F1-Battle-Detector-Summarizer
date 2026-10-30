@@ -26,7 +26,7 @@ import logging
 import re
 
 from app.config import config
-from app.replay.store import SessionArchive
+from app.replay.store import PlaybackSummary, SessionArchive
 from app.state import parse_gap, parse_openf1_timestamp
 
 logger = logging.getLogger(__name__)
@@ -319,6 +319,20 @@ def build_timeline(
         len(drivers), len(timeline.quiet_periods(quiet_gap_s)),
     )
     return timeline
+
+
+def playback_summary(
+    archive: SessionArchive, timeline: Optional[Timeline] = None
+) -> PlaybackSummary:
+    """What the broadcast schedule needs from this race, under the current settings."""
+    timeline = timeline or build_timeline(archive)
+    return PlaybackSummary(
+        start=timeline.start,
+        end=timeline.end,
+        quiet_periods=timeline.quiet_periods(),
+        quiet_gap_s=config.REPLAY_QUIET_GAP_S,
+        retirement_laps=config.REPLAY_RETIREMENT_LAPS,
+    )
 
 
 # --------------------------------------------------------------------------

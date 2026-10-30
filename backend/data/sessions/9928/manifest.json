@@ -67,6 +67,13 @@
   "fetched_at": "2026-09-23T21:32:38.051021+00:00",
   "gmt_offset": "02:00:00",
   "meeting_name": "Hungarian Grand Prix",
+  "playback": {
+    "end": "2025-08-03T14:39:40.338000+00:00",
+    "quiet_gap_s": 60.0,
+    "quiet_periods": [],
+    "retirement_laps": 2,
+    "start": "2025-08-03T13:03:06.039000+00:00"
+  },
   "round": 14,
   "schema_version": 1,
   "session_key": 9928,

@@ -67,6 +67,18 @@
   "fetched_at": "2026-10-17T20:26:15.577325+00:00",
   "gmt_offset": "02:00:00",
   "meeting_name": "Belgian Grand Prix",
+  "playback": {
+    "end": "2025-07-27T15:49:46+00:00",
+    "quiet_gap_s": 60.0,
+    "quiet_periods": [
+      [
+        "2025-07-27T15:47:11.176000+00:00",
+        "2025-07-27T15:48:59+00:00"
+      ]
+    ],
+    "retirement_laps": 2,
+    "start": "2025-07-27T14:20:00.065000+00:00"
+  },
   "round": 13,
   "schema_version": 1,
   "session_key": 9939,

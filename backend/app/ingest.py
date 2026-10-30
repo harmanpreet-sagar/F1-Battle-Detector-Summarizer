@@ -18,7 +18,7 @@ output of this step, not a debugging aid.
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import argparse
 import asyncio
 import logging
@@ -28,6 +28,7 @@ from app.clock import utcnow
 from app.config import config
 from app.openf1_client import OpenF1APIError, openf1_client
 from app.replay.store import ENDPOINTS, Manifest, SessionStore
+from app.replay.timeline import playback_summary
 from app.state import parse_openf1_timestamp
 
 logger = logging.getLogger(__name__)
@@ -235,6 +236,8 @@ class RaceIngestor:
                     if existing.meeting_name:
                         self._store.write_manifest(existing)
                         logger.info("Backfilled meeting name: %s", existing.meeting_name)
+                if not dry_run:
+                    existing, _ = refresh_playback(self._store, key)
                 return IngestResult(manifest=existing, fetched=False)
             logger.info("Cache is incomplete; refetching.")
 
@@ -254,7 +257,8 @@ class RaceIngestor:
 
         manifest = self._manifest_for(session, year, round_number)
         manifest.meeting_name = await self.resolve_meeting_name(session)
-        manifest = self._store.save(manifest, fetched)
+        self._store.save(manifest, fetched)
+        manifest, _ = refresh_playback(self._store, key)
         return IngestResult(manifest=manifest, fetched=True)
 
     def _manifest_for(self, session: Dict, year: Optional[int],
@@ -271,6 +275,22 @@ class RaceIngestor:
             gmt_offset=session.get("gmt_offset") or "+00:00",
             fetched_at=self._now(),
         )
+
+
+def refresh_playback(store: SessionStore, session_key: int) -> Tuple[Manifest, bool]:
+    """
+    Store a cached race's playback summary under the current settings, so the
+    broadcast can schedule it without indexing it. Offline; rewrites only the
+    manifest, and only when the summary changed. True if it did.
+    """
+    archive = store.load(session_key)
+    summary = playback_summary(archive)
+    manifest = archive.manifest
+    if manifest.playback == summary:
+        return manifest, False
+    manifest.playback = summary
+    store.write_manifest(manifest)
+    return manifest, True
 
 
 def format_report(manifest: Manifest) -> str:
@@ -332,6 +352,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="resolve the session and stop, without fetching its data",
     )
     parser.add_argument("--list", action="store_true", help="list cached races and exit")
+    parser.add_argument(
+        "--refresh-playback", action="store_true",
+        help="store every cached race's playback summary under the current "
+             "settings, without fetching anything, and exit",
+    )
     parser.add_argument("--verbose", "-v", action="store_true")
     return parser
 
@@ -364,6 +389,13 @@ async def main(argv: Optional[List[str]] = None) -> int:
 
     if args.list:
         print_cached(store)
+        return 0
+
+    if args.refresh_playback:
+        for key in store.session_keys():
+            manifest, changed = refresh_playback(store, key)
+            state = "updated" if changed else "up to date"
+            print(f"  {key:>7}  {(manifest.circuit or '?'):<18}{state}")
         return 0
 
     ingestor = RaceIngestor(store=store)
